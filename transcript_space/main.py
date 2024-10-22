@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    # Getis-Ord Gi* hotspot analysis
     #Ripley's K
     #LISA local indicators of spatial association
     #spatial variance/dispersion index
@@ -552,3 +551,21 @@ class SpatialStastics:
         Gi_values = numerator/denominator
         
         return Gi_values
+    
+    def compute_ripleys_K(self, **kwargs):
+        #Get distances to evaluate
+        distances = kwargs.get('distances', np.linspace(0, 1, 100))
+        area = kwargs.get('area', 1.0)
+
+        expression, position = self.get_expression_position_(kwargs)
+        distances = squareform(pdist(position))
+
+        N = expression.shape[0]
+
+        indicators = (distances[:, :, np.newaxis] <= distances).astype(float)
+        weights = np.ones_like(indicators)
+        weighted_sums = np.sum(indicators * weights, axis=(0, 1))
+
+        Kv = (area / (N**2)) * weighted_sums
+
+        return Kv

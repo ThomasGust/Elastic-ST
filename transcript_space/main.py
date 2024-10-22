@@ -227,7 +227,7 @@ class MASSENLasso:
 
     def __init__(self, l:int, alphas:np.array, l1_ratio:float, n_resamples:50, stability_threshold:float):
         self.l = l
-        self.alphas = self.alphas * l
+        self.alphas = alphas * l
         self.l1_ratio = l1_ratio
         self.n_resamples = n_resamples
         self.stability_threshold = stability_threshold

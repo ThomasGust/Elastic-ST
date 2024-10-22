@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #Spatial Co-occurence analysis
     #Mark correlation function
     #Bivariate spatial dependence
     #Spatial eigenvector mapping
@@ -644,3 +643,26 @@ class SpatialStastics:
         co_occurence_matrix = co_occurence_counts_matrix / denominator
 
         return co_occurence_matrix
+    
+    def compute_mark_correlation_function(self, **kwargs):
+        threshold_distance = kwargs.get('threshold_distance', 1.0)
+        distances_to_evaluate = kwargs.get('distances', np.linspace(0, 1, 100))
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+        N = position.shape[0]
+
+        mark_corr_values = np.zeros((len(distances_to_evaluate), expression.shape[1]))
+        mark_products = np.einsum('ij,ik->ijk', expression, expression)
+
+        indicators = distances[: , :, np.newaxis] <= distances_to_evaluate
+
+        weighted_mark_sum = np.einsum('ijk,ij->ik', indicators, mark_products)
+
+        valid_pairs = np.sum(indicators, axis=(0, 1))
+
+        valid_pairs[valid_pairs == 0] = 1
+        mark_corr_values = weighted_mark_sum / valid_pairs[:, np.newaxis]
+
+        return mark_corr_values
+

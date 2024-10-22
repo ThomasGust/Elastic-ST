@@ -435,7 +435,17 @@ class CoefficientAnalysis:
         return nx.algorithms.flow.maximum_flow(self.graph)
 
 class SpatialStastics:
-
+    #TODO:
+    # Geary's C
+    # Getis-Ord Gi* hotspot analysis
+    #Ripley's K
+    #LISA local indicators of spatial association
+    #spatial variance/dispersion index
+    #Spatial cross corellation
+    #Spatial Co-occurence analysis
+    #Mark correlation function
+    #Bivariate spatial dependence
+    #Spatial eigenvector mapping
     """
     Module for computing spatial statistics on spatial transcriptomics data. We can get stuff like the genexgene covariance matrix and spatial autocorrelation.
     """
@@ -443,31 +453,31 @@ class SpatialStastics:
     def __init__(self, data:SpatialTranscriptomicsData):
         self.data = data
     
-    def compute_gene_covariance_matrix(self, **kwargs):
-        #Get cell type
+    def get_expression_position_(self, kwargs):
         cell_type = kwargs.get('cell_type', None)
-
-        if cell_type is not None:
-            expression = self.data.G[np.where(self.data.T == self.data.celltype2idx[cell_type])]
-        else:
-            expression = self.data.G
-        expression_centered = expression - np.mean(expression, axis=0)
-        cov_matrix = np.cov(expression_centered, rowvar=False)
-        return cov_matrix
-    
-    def compute_moran_I(self, **kwargs):
-        #Get cell type
-        cell_type = kwargs.get('cell_type', None)
-
-        #Get threshold distance
-        threshold_dist = kwargs.get('threshold_dist', 1.0)
-
         if cell_type is not None:
             expression = self.data.G[np.where(self.data.T == self.data.celltype2idx[cell_type])]
             position = self.data.P[np.where(self.data.T == self.data.celltype2idx[cell_type])]
         else:
             expression = self.data.G
             position = self.data.P
+        return expression, position
+
+    def compute_gene_covariance_matrix(self, **kwargs):
+        """Does not take into account any spatial information, relies purely on expression data"""
+        #Get cell type
+        expression, _ = self.get_expression_position_(kwargs)
+        expression_centered = expression - np.mean(expression, axis=0)
+        cov_matrix = np.cov(expression_centered, rowvar=False)
+        return cov_matrix
+    
+
+    def compute_moran_I(self, **kwargs):
+
+        #Get threshold distance
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+
+        expression, position = self.get_expression_position_(kwargs)
         
         distances = squareform(pdist(position)) #Get pariwise euclidean distances between cells
 
@@ -489,3 +499,31 @@ class SpatialStastics:
         morans_I = (n_cells / sum_weights) * (numerator / denominator)
 
         return morans_I
+
+    def compute_geary_C(self, **kwargs):
+        #Get threshold distance
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+
+        #Spatial weights matrix
+
+        W = (distances < threshold_dist).astype(float)
+        np.fill_diagonal(W, 0)
+
+        W_sum = np.sum(W, axis=0)
+
+        expression_centered = expression - np.mean(expression, axis=0)
+
+        differences_squared = (expression_centered[:, np.newaxis, :] - expression_centered[np.newaxis, :, :]) ** 2
+        weighted_diffs = W[:, :, np.newaxis] * differences_squared
+
+        numerator = np.sum(weighted_diffs, axis=(0, 1))
+        denominator = np.sum(expression_centered**2, axis=0)*2
+
+        N = expression.shape[0]
+        gearys_C = ((N - 1) / W_sum) * (numerator / denominator)
+
+        return gearys_C

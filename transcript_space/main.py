@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #spatial variance/dispersion index
     #Spatial cross corellation
     #Spatial Co-occurence analysis
     #Mark correlation function
@@ -601,5 +600,25 @@ class SpatialStastics:
 
         return dispersion_index
     
+    def compute_spatial_cross_correlation(self, **kwargs):
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+        expression, position = self.get_expression_position_(kwargs)
 
+        distances = squareform(pdist(position))
 
+        W = (distances < threshold_dist).astype(float)
+        np.fill_diagonal(W, 0)
+
+        expression_centered = expression - np.mean(expression, axis=0)
+
+        spatial_lag = W @ expression_centered
+
+        numerator = spatial_lag.T @ spatial_lag
+
+        norm = np.linalg.norm(expression_centered, axis=0)
+
+        denominator = np.outer(norm, norm)
+
+        cross_corr_matrix = numerator/denominator
+
+        return cross_corr_matrix

@@ -47,6 +47,26 @@ class SpatialTranscriptomicsData:
 
         self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
+    
+    def remap_metagenes(self, metagenes:Union[list[str], list[tuple[str, float]]]):
+        """
+        Instead of having cellxgenes, the expression matrix G will now have cellxmetagenes. This is useful for reducing the dimensionality of the data and revealing better biological insights.
+        metagenes can either be a list of gene names, or a list of tuples with the gene name and a weight.
+        """
+
+        if isinstance(metagenes[0], str):
+            metagene_indices = [self.gene2idx[gene] for gene in metagenes]
+            self.G = self.G[:, metagene_indices]
+            self.gene_names = metagenes
+            self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
+            self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
+        else:
+            metagene_indices = [self.gene2idx[gene] for gene, weight in metagenes]
+            metagene_weights = [weight for gene, weight in metagenes]
+            self.G = self.G[:, metagene_indices] @ np.array(metagene_weights)
+            self.gene_names = [gene for gene, weight in metagenes]
+            self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
+            self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
 
 class FeatureSetData:
     """

@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #Ripley's K
     #LISA local indicators of spatial association
     #spatial variance/dispersion index
     #Spatial cross corellation
@@ -569,3 +568,27 @@ class SpatialStastics:
         Kv = (area / (N**2)) * weighted_sums
 
         return Kv
+
+    def compute_lisa(self, **kwargs):
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+
+        W = (distances < threshold_dist).astype(float)
+        np.fill_diagonal(W, 0)
+
+        N = expression.shape[0]
+        X_mean = np.mean(expression, axis=0)
+        X_var = np.var(expression, axis=0, ddof=1)
+
+        X_centered = expression - X_mean
+
+        spatial_lag = W @ X_centered
+
+        lisa = (X_centered / X_var) * spatial_lag
+
+        return lisa
+    
+    
+

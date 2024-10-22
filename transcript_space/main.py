@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    # Geary's C
     # Getis-Ord Gi* hotspot analysis
     #Ripley's K
     #LISA local indicators of spatial association
@@ -527,3 +526,29 @@ class SpatialStastics:
         gearys_C = ((N - 1) / W_sum) * (numerator / denominator)
 
         return gearys_C
+
+    def compute_getis_ord_Gi(self, **kwargs):
+
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+        W = (distances < threshold_dist).astype(float)
+        np.fill_diagonal(W, 0)
+
+        N = expression.shape[0]
+        W_sum = np.sum(W, axis=1)
+
+        expression_mean = np.mean(expression, axis=0)
+        expression_std = np.std(expression, axis=0, ddof=1)
+
+        weighted_sums = W @ expression
+        numerator = weighted_sums - (expression_mean * W_sum[:, np.newaxis])
+
+        #Now we need the denominator for all cells and genes
+        W_squared_sum = np.sum(W ** 2, axis=1)
+        denominator = expression_std * np.sqrt((N * W_squared_sum - W_sum ** 2) / (N - 1))[:, np.newaxis]
+
+        Gi_values = numerator/denominator
+        
+        return Gi_values

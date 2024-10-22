@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from tqdm import tqdm
 from typing import Union
+import networkx as nx
 
 class SpatialTranscriptomicsData:
     """
@@ -337,7 +338,7 @@ class ModularTranscriptSpace:
         n_resamples = kwargs.get('n_resamples', 50)
         stability_threshold = kwargs.get('stability_threshold', 0.5)
 
-        out_path = kwargs.get('out_path', 'coefficients.npy')
+        out_path = kwargs.get('out_path', 'coefficients')
 
         for i in tqdm(range(out_feature_dim)):
             feature_attributes = []
@@ -364,5 +365,73 @@ class ModularTranscriptSpace:
 
         self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
         self.coefficient_matrix.save(out_path)
+    
+
+class CoefficientAnalysis:
+
+    def __init__(self, coefficient_matrix:CoefficientFeatureMatrix, graph_threshold):
+        self.coefficient_matrix = coefficient_matrix
+
+        self.graph = self.build_coefficient_graph(graph_threshold)
+
+    def build_coefficient_graph(self, threshold:float):
+        G = nx.Graph()
+
+        for i, in_feature in enumerate(self.coefficient_matrix.in_features):
+            for j, out_feature in enumerate(self.coefficient_matrix.out_features):
+                weight = self.coefficient_matrix.coefficients[i, j]
+                if i != j and weight != 0 and abs(weight) > threshold:
+                    G.add_edge(in_feature, out_feature, weight=weight)
         
+        return G
+    
+    def __str__(self):
+        return f"Graph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
+
+    def get_graph_communities(self):
+        return nx.algorithms.community.greedy_modularity_communities(self.graph)
+    
+    def get_graph_cliques(self):
+        return nx.algorithms.clique.find_cliques(self.graph)
+    
+    def get_graph_max_clique(self):
+        return nx.algorithms.clique.graph_clique_number(self.graph)
+    
+    def get_graph_components(self):
+        return nx.algorithms.components.connected_components(self.graph)
+    
+    def get_graph_diameter(self):
+        return nx.algorithms.distance_measures.diameter(self.graph)
+    
+    def get_graph_degree_centrality(self):
+        return nx.algorithms.centrality.degree_centrality(self.graph)
+    
+    def get_graph_closeness_centrality(self):
+        return nx.algorithms.centrality.closeness_centrality(self.graph)
+    
+    def get_graph_betweenness_centrality(self):
+        return nx.algorithms.centrality.betweenness_centrality(self.graph)
+    
+    def get_graph_eigenvector_centrality(self):
+        return nx.algorithms.centrality.eigenvector_centrality(self.graph)
+    
+    def get_graph_clustering_coefficient(self):
+        return nx.algorithms.cluster.clustering(self.graph)
+    
+    def get_graph_transitivity(self):
+        return nx.algorithms.cluster.transitivity(self.graph)
+    
+    def get_graph_average_shortest_path_length(self):
+        return nx.algorithms.shortest_paths.generic.average_shortest_path_length(self.graph)
+    
+    def get_graph_dominating_set(self):
+        return nx.algorithms.approximation.dominating_set.min_weighted_dominating_set(self.graph)
+    
+    def get_graph_max_matching(self):
+        return nx.algorithms.matching.max_weight_matching(self.graph)
+    
+    def get_graph_max_flow(self):
+        return nx.algorithms.flow.maximum_flow(self.graph)
+
+
     

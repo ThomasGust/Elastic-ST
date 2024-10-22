@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #Bivariate spatial dependence
     #Spatial eigenvector mapping
     """
     Module for computing spatial statistics on spatial transcriptomics data. We can get stuff like the genexgene covariance matrix and spatial autocorrelation.
@@ -688,4 +687,25 @@ class SpatialStastics:
         bivariate_morans_I = (expression.shape[0] / W_sum) * (numerator / denominator)
 
         return bivariate_morans_I
+    
+    def spatial_eigenvector_mapping(self, **kwargs):
+        threshold_distance = kwargs.get('threshold_distance', 1.0)
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+
+        W = (distances < threshold_distance).astype(float)
+        np.fill_diagonal(W, 0)
+
+        D = np.diag(W.sum(axis=1))
+        L = D - W #Laplacian matrix
+
+        #Use eigh here because L is symmetric
+        eigenvalues, eigenvectors = np.linalg.eigh(L)
+
+        sorted_indices = np.argsort(eigenvalues)
+        eigenvalues = eigenvalues[sorted_indices]
+        eigenvectors = eigenvectors[:, sorted_indices]
+
+        return eigenvectors, eigenvalues
 

@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Union
 import networkx as nx
-from scipy.spatial.distance import pdist, squareform
+from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
 
 class SpatialTranscriptomicsData:
@@ -425,6 +425,135 @@ class HMRF:
     def predict(self):
         """Return the predicted hidden states."""
         return self.hidden_states
+
+class SpatialGMM:
+    def __init__(self, n_components, max_iterations=100, tol=1e-4, spatial_reg=1.0):
+        """
+        Initialize the Spatial GMM model.
+        
+        Parameters:
+            n_components (int): Number of clusters.
+            max_iterations (int): Maximum number of EM iterations.
+            tol (float): Convergence threshold.
+            spatial_reg (float): Regularization parameter for spatial information.
+        """
+        self.n_components = n_components
+        self.max_iterations = max_iterations
+        self.tol = tol
+        self.spatial_reg = spatial_reg
+
+    def fit(self, X, P):
+        """
+        Fit the Spatial GMM model to the data.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
+        """
+        N, D = X.shape
+        
+        # Step 1: Initialize GMM parameters
+        self.means = X[np.random.choice(N, self.n_components, replace=False)]
+        self.covariances = np.array([np.cov(X, rowvar=False)] * self.n_components)
+        self.weights = np.full(self.n_components, 1 / self.n_components)
+        
+        # Step 2: EM algorithm
+        log_likelihood = -np.inf
+        for iteration in range(self.max_iterations):
+            # E-step: Calculate responsibilities
+            responsibilities = self._e_step(X, P)
+            
+            # M-step: Update parameters
+            self._m_step(X, responsibilities)
+            
+            # Check for convergence
+            new_log_likelihood = self._compute_log_likelihood(X, responsibilities)
+            if np.abs(new_log_likelihood - log_likelihood) < self.tol:
+                print(f'Converged at iteration {iteration}')
+                break
+            log_likelihood = new_log_likelihood
+
+    def _e_step(self, X, P):
+        """
+        E-step: Compute the responsibilities for each data point.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
+        
+        Returns:
+            numpy.ndarray: Responsibilities matrix (N x n_components).
+        """
+        N = X.shape[0]
+        responsibilities = np.zeros((N, self.n_components))
+
+        # Compute Gaussian likelihood for each component
+        for k in range(self.n_components):
+            diff = X - self.means[k]
+            inv_cov = np.linalg.inv(self.covariances[k])
+            log_det_cov = np.linalg.slogdet(self.covariances[k])[1]
+            likelihood = np.exp(-0.5 * np.sum(diff @ inv_cov * diff, axis=1))
+            likelihood /= np.sqrt((2 * np.pi) ** X.shape[1] * np.exp(log_det_cov))
+
+            # Spatial regularization term
+            spatial_term = np.exp(-self.spatial_reg * cdist(P, [self.means[k, :2]]).flatten())
+            
+            # Combine likelihood and spatial term
+            responsibilities[:, k] = self.weights[k] * likelihood * spatial_term
+        
+        # Normalize responsibilities
+        responsibilities /= responsibilities.sum(axis=1, keepdims=True)
+        return responsibilities
+
+    def _m_step(self, X, responsibilities):
+        """
+        M-step: Update the GMM parameters.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            responsibilities (numpy.ndarray): Responsibilities matrix.
+        """
+        Nk = responsibilities.sum(axis=0)
+        
+        # Update weights
+        self.weights = Nk / Nk.sum()
+        
+        # Update means
+        self.means = (responsibilities.T @ X) / Nk[:, np.newaxis]
+        
+        # Update covariances
+        for k in range(self.n_components):
+            diff = X - self.means[k]
+            self.covariances[k] = (responsibilities[:, k][:, np.newaxis] * diff).T @ diff / Nk[k]
+            self.covariances[k] += 1e-6 * np.eye(X.shape[1])  # Regularize for stability
+
+    def _compute_log_likelihood(self, X, responsibilities):
+        """
+        Compute the log-likelihood of the data given the current model parameters.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            responsibilities (numpy.ndarray): Responsibilities matrix.
+        
+        Returns:
+            float: Log-likelihood value.
+        """
+        log_likelihood = np.sum(np.log(responsibilities.sum(axis=1)))
+        return log_likelihood
+
+    def predict(self, X):
+        """
+        Predict cluster labels for new data.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+        
+        Returns:
+            numpy.ndarray: Cluster labels for each cell.
+        """
+        responsibilities = self._e_step(X, np.zeros((X.shape[0], 2)))
+        return np.argmax(responsibilities, axis=1)
+
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]

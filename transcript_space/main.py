@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #Spatial cross corellation
     #Spatial Co-occurence analysis
     #Mark correlation function
     #Bivariate spatial dependence
@@ -601,6 +600,7 @@ class SpatialStastics:
         return dispersion_index
     
     def compute_spatial_cross_correlation(self, **kwargs):
+        """Finds spatial correlation between pairs of genes"""
         threshold_dist = kwargs.get('threshold_dist', 1.0)
         expression, position = self.get_expression_position_(kwargs)
 
@@ -612,13 +612,35 @@ class SpatialStastics:
         expression_centered = expression - np.mean(expression, axis=0)
 
         spatial_lag = W @ expression_centered
-
         numerator = spatial_lag.T @ spatial_lag
 
         norm = np.linalg.norm(expression_centered, axis=0)
-
         denominator = np.outer(norm, norm)
 
         cross_corr_matrix = numerator/denominator
 
         return cross_corr_matrix
+    
+    def compute_spatial_co_occurence(self, **kwargs):
+        threshold_distance = kwargs.get('threshold_distance', 1.0)
+        expression_threshold = kwargs.get('expression_threshold', 0.5)
+
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+
+        W = (distances < threshold_distance).astype(float)
+        np.fill_diagonal(W, 0)
+
+        high_expression = expression > np.percentile(expression, expression_threshold*100, axis=0)
+
+        co_occurence_counts_matrix = (high_expression.T @ W @ high_expression)
+
+        num_high_expressions = np.sum(high_expression, axis=0)
+        denominator = np.outer(num_high_expressions, num_high_expressions)
+
+        denominator[denominator == 0] = 1
+
+        co_occurence_matrix = co_occurence_counts_matrix / denominator
+
+        return co_occurence_matrix

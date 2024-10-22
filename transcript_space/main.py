@@ -6,6 +6,7 @@ import json as json
 import os
 import pandas as pd
 from tqdm import tqdm
+from typing import Union
 
 class SpatialTranscriptomicsData:
     """
@@ -287,6 +288,24 @@ class MASSENLasso:
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
 
+class CoefficientFeatureMatrix:
+    """Object to hold a coefficient matrix alonside the input and output feature names"""
+    def __init__(self, coefficients:Union[np.array, None], in_features:Union[np.array, None], out_features:Union[np.array, None]):
+        self.coefficients = coefficients
+        self.in_features = in_features
+        self.out_features = out_features
+
+    def save(self, root_path:str):
+        np.save(os.path.join(root_path, 'coefficients.npy'), self.coefficients)
+        np.save(os.path.join(root_path, 'in_features.npy'), self.in_features)
+        np.save(os.path.join(root_path, 'out_features.npy'), self.out_features)
+    
+    def load(self, root_path:str):
+        self.coefficients = np.load(os.path.join(root_path, 'coefficients.npy'))
+        self.in_features = np.load(os.path.join(root_path, 'in_features.npy'))
+        self.out_features = np.load(os.path.join(root_path, 'out_features.npy'))
+
+
 class ModularTranscriptSpace:
 
     def __init__(self, in_features:list[ModelFeature], out_feature:GeneExpressionFeature, alphas=list[float]):
@@ -307,6 +326,9 @@ class ModularTranscriptSpace:
 
         in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
         out_feature_dim = self.out_features[0].data.G.shape[1]
+
+        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
+        out_feature_names = self.out_features[0].data.gene_names
 
         self.coefficients = np.zeros((in_feature_dim, out_feature_dim))
 
@@ -340,6 +362,7 @@ class ModularTranscriptSpace:
             
             self.coefficients[:, i] = coeffs
 
-        np.save(out_path, self.coefficients)
+        self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
+        self.coefficient_matrix.save(out_path)
+        
     
-

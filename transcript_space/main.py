@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #LISA local indicators of spatial association
     #spatial variance/dispersion index
     #Spatial cross corellation
     #Spatial Co-occurence analysis
@@ -590,5 +589,17 @@ class SpatialStastics:
 
         return lisa
     
+    def compute_disperion_index(self, **kwargs):
+        """Also does not take into account spatial information"""
+
+        expression, _ = self.get_expression_position_(kwargs)
+
+        expression_mean = np.mean(expression, axis=0)
+        expression_var = np.var(expression, axis=0, ddof=1)
+
+        dispersion_index = expression_var / expression_mean
+
+        return dispersion_index
     
+
 

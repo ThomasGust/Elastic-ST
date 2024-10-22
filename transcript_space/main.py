@@ -8,6 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Union
 import networkx as nx
+from scipy.spatial.distance import pdist, squareform
 
 class SpatialTranscriptomicsData:
     """
@@ -433,5 +434,58 @@ class CoefficientAnalysis:
     def get_graph_max_flow(self):
         return nx.algorithms.flow.maximum_flow(self.graph)
 
+class SpatialStastics:
 
+    """
+    Module for computing spatial statistics on spatial transcriptomics data. We can get stuff like the genexgene covariance matrix and spatial autocorrelation.
+    """
+
+    def __init__(self, data:SpatialTranscriptomicsData):
+        self.data = data
     
+    def compute_gene_covariance_matrix(self, **kwargs):
+        #Get cell type
+        cell_type = kwargs.get('cell_type', None)
+
+        if cell_type is not None:
+            expression = self.data.G[np.where(self.data.T == self.data.celltype2idx[cell_type])]
+        else:
+            expression = self.data.G
+        expression_centered = expression - np.mean(expression, axis=0)
+        cov_matrix = np.cov(expression_centered, rowvar=False)
+        return cov_matrix
+    
+    def compute_moran_I(self, **kwargs):
+        #Get cell type
+        cell_type = kwargs.get('cell_type', None)
+
+        #Get threshold distance
+        threshold_dist = kwargs.get('threshold_dist', 1.0)
+
+        if cell_type is not None:
+            expression = self.data.G[np.where(self.data.T == self.data.celltype2idx[cell_type])]
+            position = self.data.P[np.where(self.data.T == self.data.celltype2idx[cell_type])]
+        else:
+            expression = self.data.G
+            position = self.data.P
+        
+        distances = squareform(pdist(position)) #Get pariwise euclidean distances between cells
+
+        #Now we need to deal with the spatial weights matrix
+        W = (distances < threshold_dist).astype(float)
+        np.fill_diagonal(W, 0) #No self connections
+
+        expression_centered = expression - np.mean(expression, axis=0)
+
+        WG = W @ expression_centered
+
+        numerator = np.sum(expression_centered * WG, axis=0)
+        denominator = np.sum(expression_centered ** 2, axis=0)
+
+        #Scale by the number of cells and the sum of weights
+        n_cells = expression.shape[0]
+        sum_weights = np.sum(W, axis=0)
+
+        morans_I = (n_cells / sum_weights) * (numerator / denominator)
+
+        return morans_I

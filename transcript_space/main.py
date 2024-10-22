@@ -9,6 +9,7 @@ from tqdm import tqdm
 from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform
+from scipy.stats import multivariate_normal
 
 class SpatialTranscriptomicsData:
     """
@@ -306,6 +307,124 @@ class MASSENLasso:
         u = np.sum((y - y_pred) ** 2)
         v = np.sum((y - np.mean(y)) ** 2)
         return 1 - u / v
+
+class HMRF:
+    def __init__(self, num_states, max_iterations=100, smooth_factor=1.0, convergence_threshold=1e-4):
+        """
+        Initialize the HMRF model.
+        
+        Parameters:
+            num_states (int): Number of hidden states (regions).
+            max_iterations (int): Maximum number of EM iterations.
+            smooth_factor (float): Spatial smoothness factor.
+            convergence_threshold (float): Threshold for convergence.
+        """
+        self.num_states = num_states
+        self.max_iterations = max_iterations
+        self.smooth_factor = smooth_factor
+        self.convergence_threshold = convergence_threshold
+
+    def fit(self, X, P, threshold_distance=10.0):
+        """
+        Fit the HMRF model to the spatial transcriptomics data.
+        
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
+            threshold_distance (float): Distance threshold for defining neighbors.
+        """
+        # Step 1: Normalize the expression data
+        X = (X - X.mean(axis=0)) / X.std(axis=0)
+
+        # Step 2: Create the neighborhood graph
+        self.graph = self._create_neighborhood_graph(P, threshold_distance)
+        N = X.shape[0]  # Number of cells
+
+        # Step 3: Initialize hidden states and parameters
+        self.hidden_states = np.random.randint(0, self.num_states, size=N)
+        self.means, self.variances = self._initialize_parameters(X, self.hidden_states)
+
+        # Step 4: EM algorithm
+        for iteration in range(self.max_iterations):
+            # E-step: Update state probabilities
+            state_probabilities = self._e_step(X)
+
+            # M-step: Update parameters
+            new_means, new_variances = self._m_step(X, state_probabilities)
+
+            # Check for convergence
+            max_change = np.max(np.abs(new_means - self.means))
+            if max_change < self.convergence_threshold:
+                print(f'Converged at iteration {iteration}')
+                break
+
+            # Update parameters
+            self.means, self.variances = new_means, new_variances
+
+        # Step 5: Assign final hidden states
+        self.hidden_states = np.argmax(state_probabilities, axis=1)
+
+    def _create_neighborhood_graph(self, P, threshold_distance):
+        """Create a neighborhood graph based on spatial coordinates."""
+        distances = squareform(pdist(P))
+        G = nx.Graph()
+        for i in range(distances.shape[0]):
+            for j in range(i + 1, distances.shape[1]):
+                if distances[i, j] < threshold_distance:
+                    G.add_edge(i, j)
+        return G
+
+    def _initialize_parameters(self, X, hidden_states):
+        """Initialize the mean and variance for each state."""
+        means = np.zeros((self.num_states, X.shape[1]))
+        variances = np.zeros((self.num_states, X.shape[1]))
+        for state in range(self.num_states):
+            state_data = X[hidden_states == state]
+            if len(state_data) > 0:
+                means[state] = state_data.mean(axis=0)
+                variances[state] = state_data.var(axis=0) + 1e-6  # Add small value to avoid zero variance
+            else:
+                means[state] = np.random.rand(X.shape[1])
+                variances[state] = np.ones(X.shape[1])
+        return means, variances
+
+    def _e_step(self, X):
+        """E-step: Compute the state probabilities for each cell."""
+        N = X.shape[0]
+        state_probabilities = np.zeros((N, self.num_states))
+
+        for i in range(N):
+            for state in range(self.num_states):
+                likelihood = multivariate_normal.pdf(X[i], mean=self.means[state], cov=np.diag(self.variances[state]))
+                prior = np.exp(-self.smooth_factor * self._spatial_energy(i, state))
+                state_probabilities[i, state] = likelihood * prior
+
+            # Normalize probabilities
+            state_probabilities[i] /= state_probabilities[i].sum()
+
+        return state_probabilities
+
+    def _m_step(self, X, state_probabilities):
+        """M-step: Update the mean and variance for each state."""
+        new_means = np.zeros_like(self.means)
+        new_variances = np.zeros_like(self.variances)
+        for state in range(self.num_states):
+            weight_sum = state_probabilities[:, state].sum()
+            if weight_sum > 0:
+                new_means[state] = (state_probabilities[:, state][:, np.newaxis] * X).sum(axis=0) / weight_sum
+                new_variances[state] = (state_probabilities[:, state][:, np.newaxis] * (X - new_means[state])**2).sum(axis=0) / weight_sum + 1e-6
+        return new_means, new_variances
+
+    def _spatial_energy(self, i, state):
+        """Calculate the spatial energy for cell i being in state."""
+        energy = 0.0
+        for neighbor in self.graph.neighbors(i):
+            energy += int(self.hidden_states[neighbor] != state)
+        return energy
+
+    def predict(self):
+        """Return the predicted hidden states."""
+        return self.hidden_states
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]

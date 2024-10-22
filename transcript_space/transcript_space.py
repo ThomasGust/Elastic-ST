@@ -43,31 +43,47 @@ class SpatialTranscriptomicsData:
         self.cell_types = self.annotations['cell_types']
         self.gene_names = self.annotations['gene_names']
 
+        self.map_dicts()
+    
+    def map_dicts(self):
         self.celltype2idx = {cell_type: idx for idx, cell_type in enumerate(self.cell_types)}
         self.idx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.cell_types)}
 
         self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
     
-    def remap_metagenes(self, metagenes:Union[list[str], list[tuple[str, float]]]):
+    def remap_metagenes(self, metagenes:Union[list[tuple[str, list[str]]], list[tuple[str, list[str], float]]]):
         """
         Instead of having cellxgenes, the expression matrix G will now have cellxmetagenes. This is useful for reducing the dimensionality of the data and revealing better biological insights.
-        metagenes can either be a list of gene names, or a list of tuples with the gene name and a weight.
+        metagenes can either be a list of tuples of metagene names, and a list of gene names, or a list of tuples of metagene names, a list of gene names, and a list of weights.
         """
 
-        if isinstance(metagenes[0], str):
-            metagene_indices = [self.gene2idx[gene] for gene in metagenes]
-            self.G = self.G[:, metagene_indices]
-            self.gene_names = metagenes
-            self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
-            self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
-        else:
-            metagene_indices = [self.gene2idx[gene] for gene, weight in metagenes]
-            metagene_weights = [weight for gene, weight in metagenes]
-            self.G = self.G[:, metagene_indices] @ np.array(metagene_weights)
-            self.gene_names = [gene for gene, weight in metagenes]
-            self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
-            self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
+        new_G = np.zeros((self.G.shape[0], len(metagenes)))
+        metagene_names = []
+
+        normalized_G = self.G / np.sum(self.G, axis=1)[:, np.newaxis]
+        if len(list(metagenes[0])) == 2:
+            #No weights
+            for metagene in metagenes:
+                metagene_name, gene_names = metagene
+                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices], axis=1)
+                metagene_names.append(metagene_name)
+
+        elif len(list(metagenes[0])) == 3:
+            #Weights
+            for metagene in metagenes:
+                metagene_name, gene_names, weights = metagene
+                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices] * weights, axis=1)
+                metagene_names.append(metagene_name)
+        
+        self.G = new_G
+        self.gene_names = metagene_names
+
+
+        
+
 
 class FeatureSetData:
     """

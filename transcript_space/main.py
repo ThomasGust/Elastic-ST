@@ -436,7 +436,6 @@ class CoefficientAnalysis:
 
 class SpatialStastics:
     #TODO:
-    #Mark correlation function
     #Bivariate spatial dependence
     #Spatial eigenvector mapping
     """
@@ -645,7 +644,6 @@ class SpatialStastics:
         return co_occurence_matrix
     
     def compute_mark_correlation_function(self, **kwargs):
-        threshold_distance = kwargs.get('threshold_distance', 1.0)
         distances_to_evaluate = kwargs.get('distances', np.linspace(0, 1, 100))
         expression, position = self.get_expression_position_(kwargs)
 
@@ -665,4 +663,29 @@ class SpatialStastics:
         mark_corr_values = weighted_mark_sum / valid_pairs[:, np.newaxis]
 
         return mark_corr_values
+    
+    def bivariate_morans_I(self, **kwargs):
+        threshold_distance = kwargs.get('threshold_distance', 1.0)
+        expression, position = self.get_expression_position_(kwargs)
+
+        distances = squareform(pdist(position))
+
+        W = (distances < threshold_distance).astype(float)
+        np.fill_diagonal(W, 0)
+
+        W_sum = np.sum(W, axis=0)
+
+        expression_centered = expression - np.mean(expression, axis=0)
+
+        spatial_lag = W @ expression_centered
+
+        numerator = expression_centered.T @ spatial_lag
+
+        norm_X = np.sqrt(np.sum(expression_centered ** 2, axis=0))
+        norm_Y = np.sqrt(np.sum(spatial_lag ** 2, axis=0))
+
+        denominator = np.outer(norm_X, norm_Y)
+        bivariate_morans_I = (expression.shape[0] / W_sum) * (numerator / denominator)
+
+        return bivariate_morans_I
 

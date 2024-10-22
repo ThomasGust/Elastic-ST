@@ -993,3 +993,8 @@ class SpatialStastics:
 
         return eigenvectors, eigenvalues
 
+if __name__ == "__main__":
+    st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+
+    print(st.gene_names)
+    print(st.cell_types)

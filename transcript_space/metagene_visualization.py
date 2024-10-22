@@ -4,23 +4,26 @@ from dash.dependencies import Input, Output
 import plotly.express as px
 import pandas as pd
 import numpy as np
+from transcript_space import SpatialTranscriptomicsData
 
+st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
 # Example data
 np.random.seed(42)
-num_cells = 200
-genes = ['Gene' + str(i) for i in range(1, 11)]
-cell_types = ['TypeA', 'TypeB', 'TypeC']
+
+genes = st.gene_names
+cell_types = st.cell_types
 
 # Create a random dataset
 data = {
-    'Cell': [f'Cell{i}' for i in range(num_cells)],
-    'X': np.random.rand(num_cells) * 100,
-    'Y': np.random.rand(num_cells) * 100,
-    'CellType': np.random.choice(cell_types, num_cells),
+    'Cell': [f'Cell-{i}' for i in range(st.T.shape[0])],
+    'X': st.P[:, 0],
+    'Y': st.P[:, 1],
+    'CellType': [cell_types[i] for i in st.T],
 }
 # Add random gene expression data
+G = np.log1p(st.G)
 for gene in genes:
-    data[gene] = np.random.rand(num_cells) * 10
+    data[gene] = G[:, st.gene_names.index(gene)]
 
 df = pd.DataFrame(data)
 

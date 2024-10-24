@@ -991,6 +991,9 @@ class SpatialStastics:
 
 if __name__ == "__main__":
     st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+    
+    gene_feature = GeneExpressionFeature(st)
+    neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
 
-    print(st.gene_names)
-    print(st.cell_types)
+    annotation_data = FeatureSetData()
+    neighborhood_metagene_feature = NeighborhoodMetageneFeature(st, feature_set)

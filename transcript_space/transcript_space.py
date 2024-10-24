@@ -10,6 +10,8 @@ from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
+#Get KDTree from sklearn
+from sklearn.neighbors import KDTree
 
 class SpatialTranscriptomicsData:
     """
@@ -93,15 +95,14 @@ class FeatureSetData:
         self.bin_key = bin_key
 
         self.annotations = pd.read_csv(path, index_col=0)
-        self.feature_sets = self.annotations.columns
-        self.gene_names = self.annotations.index
-    
-    def get_genes_in_feature_set(self, feature_set:str):
-        return self.annotations.index[self.annotations[feature_set] == self.bin_key].tolist()
-    
-    def get_feature_sets_for_gene(self, gene:str):
-        return self.annotations.columns[self.annotations.loc[gene] == self.bin_key].tolist()
+        self.feature_sets = list(self.annotations.columns)
+        self.gene_names = list(self.annotations.index)
+        print(self.gene_names)
 
+    def get_feature_sets_for_gene(self, gene:str):
+        #Get index of gene row
+        gene_idx = self.gene_names.index('A1BG')
+        print(gene_idx)
 class ModelFeature:
 
     def __init__(self, name):
@@ -164,6 +165,9 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             #Get the neighborhood abundances
             self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
 
+            #Save the neighborhood abundances to a npy file
+            np.save('neighborhood_abundances.npy', self.neighborhood_abundances)
+
             self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
         
         def get_feature(self, **kwargs):
@@ -171,25 +175,26 @@ class NeighborhoodAbundanceFeature(ModelFeature):
 
         def _compute_neighborhood_abundances(self, G, P, T, radius):
             n_cells = G.shape[0]
-            n_cell_types = T.shape[1]
-    
-            neighborhood_abundances = np.zeros((n_cells, n_cell_types))
-    
+            
+            #Reshape T to be a 2d array from a 1d array of strings
+            T_ = np.zeros((n_cells, len(self.celltype2idx)))
             for i in range(n_cells):
-                cell_type = T[i].nonzero()[1][0]
-                neighborhood_abundances[i, cell_type] += 1
-    
-                for j in range(n_cells):
-                    if i == j:
-                        continue
-    
-                    distance = np.linalg.norm(P[i] - P[j])
-    
-                    if distance <= radius:
-                        cell_type = T[j].nonzero()[1][0]
-                        neighborhood_abundances[i, cell_type] += 1
-    
-            return neighborhood_abundances
+                #print(T[i])
+                T_[i, T[i]] = 1
+            
+            T = T_
+            n_cell_types = T.shape[1]
+
+            neighborhood_abundances = np.zeros((n_cells, n_cell_types))
+
+            #Use a KDTree to find the nearest neighbors
+            tree = KDTree(P)
+            for i in tqdm(range(n_cells)):
+                
+                #Get the neighbors within the radius
+                neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
+                for neighbor in neighbors:
+                    neighborhood_abundances[i] += T[neighbor]
 
 class NeighborhoodMetageneFeature(ModelFeature):
     """Compute the neighborhood abundance of all the genes in a given feature set"""
@@ -262,6 +267,15 @@ class MASSENLasso:
     """
 
     def __init__(self, l:int, alphas:np.array, l1_ratio:float, n_resamples:50, stability_threshold:float):
+
+        """
+        Parameters:
+            l (int): Number of Lasso regularization parameters.
+            alphas (numpy.ndarray): Array of Lasso regularization parameters.
+            l1_ratio (float): Ratio of L1 penalty.
+            n_resamples (int): Number of resamples for stability selection.
+            stability_threshold (float): Threshold for stability selection
+        """
         self.l = l
         self.alphas = alphas * l
         self.l1_ratio = l1_ratio
@@ -306,7 +320,6 @@ class MASSENLasso:
             result = minimize(self._objective, initial_coef, args=(X_selected, y), method='L-BFGS-B')
             self.coef_ = np.zeros(X.shape[1])
             self.coef_[self.selected_features_] = result.x
-        
         else:
             self.coef_ = np.zeros(X.shape[1])
     
@@ -323,7 +336,8 @@ class MASSENLasso:
 class HMRF:
     def __init__(self, num_states, max_iterations=100, smooth_factor=1.0, convergence_threshold=1e-4):
         """
-        Initialize the HMRF model.
+        Initialize the HMRF model. This is a Hidden Markov Random Field Model.
+        Essentially, it combines spatial and gene expression data to cluster groups of cells into subtypes.
         
         Parameters:
             num_states (int): Number of hidden states (regions).
@@ -441,7 +455,8 @@ class HMRF:
 class SpatialGMM:
     def __init__(self, n_components, max_iterations=100, tol=1e-4, spatial_reg=1.0):
         """
-        Initialize the Spatial GMM model.
+        Initialize the Spatial GMM model. Similar to the HMRF, this model combines spatial information and expression data to
+        determine cell regions.
         
         Parameters:
             n_components (int): Number of clusters.
@@ -990,10 +1005,9 @@ class SpatialStastics:
         return eigenvectors, eigenvalues
 
 if __name__ == "__main__":
-    st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+    st = SpatialTranscriptomicsData(root_path='C:\\Users\Thomas\OneDrive\Apps\Documents\GitHub\Triton\TranscriptSpace\data\colon_cancer', name='colon_cancer')
     
     gene_feature = GeneExpressionFeature(st)
     neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
-
-    annotation_data = FeatureSetData()
-    neighborhood_metagene_feature = NeighborhoodMetageneFeature(st, feature_set)
+    modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0])
+    modular_transcript_space.fit(l1_ratio=0.5, n_resamples=50, stability_threshold=0.5, out_path='coefficients')

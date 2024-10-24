@@ -81,10 +81,6 @@ class SpatialTranscriptomicsData:
         self.G = new_G
         self.gene_names = metagene_names
 
-
-        
-
-
 class FeatureSetData:
     """
     This represents a functional annotation object.

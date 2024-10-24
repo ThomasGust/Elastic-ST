@@ -6,9 +6,10 @@ import pandas as pd
 import numpy as np
 from transcript_space import SpatialTranscriptomicsData
 
-st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
-# Example data
-np.random.seed(42)
+#st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+
+st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thomas\\OneDrive\\Apps\\Documents\\GitHub\\Triton\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+
 
 genes = st.gene_names
 cell_types = st.cell_types

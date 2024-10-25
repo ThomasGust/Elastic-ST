@@ -10,6 +10,7 @@ from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
+from sklearn.linear_model import Lasso
 #Get KDTree from sklearn
 from sklearn.neighbors import KDTree
 
@@ -35,7 +36,7 @@ class SpatialTranscriptomicsData:
         self.annotation_path = os.path.join(root_path, f"{name}_annotation.json")
 
         #Load all of the core data primtives representing the data
-        self.G = np.load(self.G_path)
+        self.G = np.load(self.G_path)[:, ::10]
         self.P = np.load(self.P_path)
         self.T = np.load(self.T_path)
 
@@ -43,7 +44,7 @@ class SpatialTranscriptomicsData:
         #Load annotations for cell types and gene names, needed for interpretability
         self.annotations = json.load(open(self.annotation_path))
         self.cell_types = self.annotations['cell_types']
-        self.gene_names = self.annotations['gene_names']
+        self.gene_names = self.annotations['gene_names'][::10]
 
         self.map_dicts()
     
@@ -163,7 +164,10 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             self.radius = radius
     
             #Get the neighborhood abundances
-            self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
+            if not os.path.exists('neighborhood_abundances.npy'):
+                self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
+            else:
+                self.neighborhood_abundances = np.load('neighborhood_abundances.npy')
 
             #Save the neighborhood abundances to a npy file
             np.save('neighborhood_abundances.npy', self.neighborhood_abundances)
@@ -196,15 +200,27 @@ class NeighborhoodAbundanceFeature(ModelFeature):
                 for neighbor in neighbors:
                     neighborhood_abundances[i] += T[neighbor]
 
+            return neighborhood_abundances
+
 class NeighborhoodMetageneFeature(ModelFeature):
     """Compute the neighborhood abundance of all the genes in a given feature set"""
     def __init__(self, data:SpatialTranscriptomicsData, feature_set:FeatureSetData):
         super().__init__("neighborhood_metagene")
+        """
+        Parameters:
+            data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
+            feature_set (FeatureSetData): Feature set data object.
+        """
 
         self.data = data
         self.feature_set = feature_set
 
     def compute_feature(self, **kwargs):
+        """
+        Parameters:
+            alpha (float): Regularization parameter.
+            radius (float): Neighborhood radius.
+        """
         self.G = self.data.G
         self.P = self.data.P
         self.T = self.data.T
@@ -228,6 +244,14 @@ class NeighborhoodMetageneFeature(ModelFeature):
         self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
     
     def _compute_neighborhood_metagenes(self, G, P, T, feature_set, radius):
+        """
+        Parameters:
+            G (numpy.ndarray): Cells-by-genes expression matrix.
+            P (numpy.ndarray): Cells-by-2 position matrix.
+            T (numpy.ndarray): Cells-by-cell types matrix.
+            feature_set (FeatureSetData): Feature set data object.
+            radius (float): Neighborhood radius.
+        """
         n_cells = G.shape[0]
 
         neighborhood_metagenes = np.zeros((n_cells, len(feature_set.feature_sets)))
@@ -239,6 +263,14 @@ class NeighborhoodMetageneFeature(ModelFeature):
         return neighborhood_metagenes
     
     def _compute_neighborhood_metagene(self, G, P, i, feature_set, radius):
+        """
+        Parameters:
+            G (numpy.ndarray): Cells-by-genes expression matrix.
+            P (numpy.ndarray): Cells-by-2 position matrix.
+            i (int): Cell index.
+            feature_set (FeatureSetData): Feature set data object.
+            radius (float): Neighborhood radius.
+        """
         n_cells = G.shape[0]
         neighborhood_metagene = np.zeros(len(feature_set.feature_sets))
 
@@ -258,6 +290,11 @@ class NeighborhoodMetageneFeature(ModelFeature):
         return neighborhood_metagene
 
     def get_feature(self, **kwargs):
+        """
+        Parameters:
+            alpha (float): Regularization parameter.
+            radius (float): Neighborhood radius.
+        """
         return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
             
 
@@ -277,7 +314,7 @@ class MASSENLasso:
             stability_threshold (float): Threshold for stability selection
         """
         self.l = l
-        self.alphas = alphas * l
+        self.alphas = np.array(alphas)
         self.l1_ratio = l1_ratio
         self.n_resamples = n_resamples
         self.stability_threshold = stability_threshold
@@ -287,18 +324,31 @@ class MASSENLasso:
         self.coef_ = None
 
     
-    def _objective(self, coef, X, y):
+    def _objective(self, coef:np.array, X:np.array, y:np.array):
+        """
+        Objective function for the MASSENLasso model. This mixes a L1 Ratio with the the 
+        Parameters:
+            coef (numpy.ndarray): Coefficients.
+            X (numpy.ndarray): Input features.
+            y (numpy.ndarray): Output features.
+        """
         residual = y - X @ coef
         rss = np.sum(residual ** 2)
 
         l1_penalty = np.sum(self.alphas * np.abs(coef))
         l2_penalty = np.sum((1-self.alphas) * coef ** 2)
 
-        reg = self.l1_ratio * l1_penalty (1 - self.l1_ratio) * l2_penalty
+        #reg = self.l1_ratio * l1_penalty (1 - self.l1_ratio) * l2_penalty
+        reg = self.l1_ratio * l1_penalty + (1 - self.l1_ratio) * l2_penalty
 
         return 0.5 * rss + reg
     
-    def fit(self, X, y):
+    def fit(self, X:np.array, y:np.array):
+        """
+        Parameters:
+            X (numpy.ndarray): Input features.
+            y (numpy.ndarray): Output features.
+        """
         X = self.scaler.fit_transform(X)
         
         selection_counts = np.zeros(X.shape[1]) #Helper vector to perform stability selection
@@ -307,6 +357,10 @@ class MASSENLasso:
             X_resampled, y_resampled = resample(X, y)
 
             initial_coef = np.zeros(X_resampled.shape[1])
+
+            print("STARTING TO MINIMIZE")
+            print(X_resampled.shape)
+            print(y_resampled.shape)
 
             result = minimize(self._objective, initial_coef, args=(X_resampled, y_resampled), method='L-BFGS-B')
             coef_resampled = result.x
@@ -323,11 +377,20 @@ class MASSENLasso:
         else:
             self.coef_ = np.zeros(X.shape[1])
     
-    def predict(self, X):
+    def predict(self, X:np.array):
+        """
+        Parameters :
+            X (numpy.ndarray): Input features.
+        """
         X = self.scalar.transform(X)
         return X @ self.coef_
 
     def score(self, X, y):
+        """
+        Parameters:
+            X (numpy.ndarray): Input features.
+            y (numpy.ndarray): Output features.
+        """
         y_pred=  self.predict(X)
         u = np.sum((y - y_pred) ** 2)
         v = np.sum((y - np.mean(y)) ** 2)
@@ -391,7 +454,12 @@ class HMRF:
         self.hidden_states = np.argmax(state_probabilities, axis=1)
 
     def _create_neighborhood_graph(self, P, threshold_distance):
-        """Create a neighborhood graph based on spatial coordinates."""
+        """Create a neighborhood graph based on spatial coordinates.
+        Parameters:
+            P (numpy.ndarray): Cells-by-2 position matrix.
+            threshold_distance (float): Distance threshold for defining neighbors.
+        
+        """
         distances = squareform(pdist(P))
         G = nx.Graph()
         for i in range(distances.shape[0]):
@@ -401,7 +469,12 @@ class HMRF:
         return G
 
     def _initialize_parameters(self, X, hidden_states):
-        """Initialize the mean and variance for each state."""
+        """
+        Initialize the mean and variance for each state.
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            hidden_states (numpy.ndarray): Hidden states for each cell.
+        """
         means = np.zeros((self.num_states, X.shape[1]))
         variances = np.zeros((self.num_states, X.shape[1]))
         for state in range(self.num_states):
@@ -415,7 +488,11 @@ class HMRF:
         return means, variances
 
     def _e_step(self, X):
-        """E-step: Compute the state probabilities for each cell."""
+        """
+        E-step: Compute the state probabilities for each cell.
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+        """
         N = X.shape[0]
         state_probabilities = np.zeros((N, self.num_states))
 
@@ -431,7 +508,12 @@ class HMRF:
         return state_probabilities
 
     def _m_step(self, X, state_probabilities):
-        """M-step: Update the mean and variance for each state."""
+        """
+        M-step: Update the mean and variance for each state.
+        Parameters:
+            X (numpy.ndarray): Cells-by-genes expression matrix.
+            state_probabilities (numpy.ndarray): State probabilities for each cell.
+        """
         new_means = np.zeros_like(self.means)
         new_variances = np.zeros_like(self.variances)
         for state in range(self.num_states):
@@ -442,7 +524,12 @@ class HMRF:
         return new_means, new_variances
 
     def _spatial_energy(self, i, state):
-        """Calculate the spatial energy for cell i being in state."""
+        """
+        Calculate the spatial energy for cell i being in state.
+        Parameters:
+            i (int): Cell index.
+            state (int): State index.
+        """
         energy = 0.0
         for neighbor in self.graph.neighbors(i):
             energy += int(self.hidden_states[neighbor] != state)
@@ -582,22 +669,44 @@ class SpatialGMM:
         return np.argmax(responsibilities, axis=1)
 
 
-def flatten_list(l):
+def flatten_list(l:list):
+    """
+    Parameters:
+        l (list): List of lists.
+    """
     return [item for sublist in l for item in sublist]
 
 class CoefficientFeatureMatrix:
-    """Object to hold a coefficient matrix alonside the input and output feature names"""
+    """
+    Object to hold a coefficient matrix alonside the input and output feature names
+    
+    """
     def __init__(self, coefficients:Union[np.array, None], in_features:Union[np.array, None], out_features:Union[np.array, None]):
+        """
+        Parameters:
+            coefficients (numpy.ndarray): Coefficient matrix of shape (in_features, out_features).
+            in_features (numpy.ndarray): Names of input features.
+            out_features (numpy.ndarray): Names of output features.
+        """
+        
         self.coefficients = coefficients
         self.in_features = in_features
         self.out_features = out_features
 
     def save(self, root_path:str):
+        """
+        Parameters:
+            root_path (str): Path to the directory where the coefficient matrix should be saved.
+        """
         np.save(os.path.join(root_path, 'coefficients.npy'), self.coefficients)
         np.save(os.path.join(root_path, 'in_features.npy'), self.in_features)
         np.save(os.path.join(root_path, 'out_features.npy'), self.out_features)
     
     def load(self, root_path:str):
+        """
+        Parameters:
+            root_path (str): Path to the directory containing the coefficient matrix.
+        """
         self.coefficients = np.load(os.path.join(root_path, 'coefficients.npy'))
         self.in_features = np.load(os.path.join(root_path, 'in_features.npy'))
         self.out_features = np.load(os.path.join(root_path, 'out_features.npy'))
@@ -605,11 +714,19 @@ class CoefficientFeatureMatrix:
 
 class ModularTranscriptSpace:
 
-    def __init__(self, in_features:list[ModelFeature], out_feature:GeneExpressionFeature, alphas=list[float]):
+    def __init__(self, in_features:list[ModelFeature], out_feature:GeneExpressionFeature, alphas=list[float], cell_type='epithelial.cancer.subtype_1'):
+        """
+        Parameters:
+            in_features (list): List of input features.
+            out_feature (ModelFeature): Output feature.
+            alphas (list): List of regularization parameters for each input feature.
+        """
         self.in_features = in_features
         
         self.out_feature = out_feature
         self.out_feature.compute_feature()
+
+        self.cell_type = cell_type
 
         #Compute feature for every feature
         for feature in self.in_features:
@@ -621,13 +738,15 @@ class ModularTranscriptSpace:
         #For each gene train a new MASSENLasso and add the coefficient slice to the coefficient matrix
         #Coefficient matrix of shape (in_features, out_features)
 
-        in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
-        out_feature_dim = self.out_features[0].data.G.shape[1]
+        #in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
+        in_feature_dim = sum([len(list(feature.get_feature()[1].values())) for feature in self.in_features])
+        out_feature_dim = self.out_feature.data.G.shape[1]
 
         in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
-        out_feature_names = self.out_features[0].data.gene_names
+        out_feature_names = self.out_feature.data.gene_names
 
         self.coefficients = np.zeros((in_feature_dim, out_feature_dim))
+        print(self.coefficients.shape)
 
         #Get l1 ratio, n_resamples, and stability threshold from kwargs
         l1_ratio = kwargs.get('l1_ratio', 0.5)
@@ -639,25 +758,26 @@ class ModularTranscriptSpace:
         for i in tqdm(range(out_feature_dim)):
             feature_attributes = []
             for feature in self.in_features:
-                epoch_feature_matrix, epoch_idx2feature, epoch_feature_alpha = feature.get_feature(exclude_genes=[self.out_features[0].data.idx2gene[i]], alpha=self.alphas[self.in_features.index(feature)])
+                epoch_feature_matrix, epoch_idx2feature, epoch_feature_alpha = feature.get_feature(exclude_genes=[self.out_feature.data.idx2gene[i]], alpha=self.alphas[self.in_features.index(feature)])
                 feature_dict = {'matrix': epoch_feature_matrix, 'idx2feature': epoch_idx2feature, 'alpha': epoch_feature_alpha}
                 feature_attributes.append(feature_dict)
             
             X = np.concatenate([feature['matrix'] for feature in feature_attributes], axis=1)
             y = self.out_feature.G[:, i]
 
-            model = MASSENLasso(l=1e-3, alphas=flatten_list([fd['alpha'] for fd in feature_attributes]), l1_ratio=l1_ratio, n_resamples=n_resamples, stability_threshold=stability_threshold)
+            #Get X for cell type
+            X = X[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
+            y = y[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
+            model = Lasso(alpha=1e-3)
             model.fit(X, y)
             
             coeffs = model.coef_
-            #Insert 0s for the genes that were excluded
-            for feature in feature_attributes:
-                if feature['idx2feature'] == self.out_features[0].data.idx2gene[i]:
-                    continue
-                else:
-                    coeffs = np.insert(coeffs, feature['idx2feature'], 0)
+
+            coeffs = np.insert(coeffs, i, 0)
+            print(coeffs.shape)
             
             self.coefficients[:, i] = coeffs
+
 
         self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
         self.coefficient_matrix.save(out_path)
@@ -1009,5 +1129,5 @@ if __name__ == "__main__":
     
     gene_feature = GeneExpressionFeature(st)
     neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
-    modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0])
-    modular_transcript_space.fit(l1_ratio=0.5, n_resamples=50, stability_threshold=0.5, out_path='coefficients')
+    modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0], cell_type='Treg')
+    modular_transcript_space.fit(l1_ratio=0.5, n_resamples=1, stability_threshold=0.5, out_path='coefficients')

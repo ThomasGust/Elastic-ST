@@ -10,20 +10,11 @@ from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
-<<<<<<< HEAD
-#Get KDTrees for spatial queries
-from scipy.spatial import KDTree
-from sklearn.linear_model import ElasticNet
-from sklearn.linear_model import Lasso
-from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-import matplotlib.pyplot as plt
-import seaborn as sns
-=======
 from sklearn.linear_model import Lasso
 #Get KDTree from sklearn
 from sklearn.neighbors import KDTree
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
+import matplotlib.pyplot as plt
+from sklearn.linear_model import ElasticNet
 
 class SpatialTranscriptomicsData:
     """
@@ -56,12 +47,6 @@ class SpatialTranscriptomicsData:
         self.annotations = json.load(open(self.annotation_path))
         self.cell_types = self.annotations['cell_types']
         self.gene_names = self.annotations['gene_names'][::10]
-<<<<<<< HEAD
-
-        for gene in self.gene_names:
-            print(gene)
-=======
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
 
         self.map_dicts()
     
@@ -230,24 +215,6 @@ class NeighborhoodAbundanceFeature(ModelFeature):
 
         def _compute_neighborhood_abundances(self, G, P, T, radius):
             n_cells = G.shape[0]
-<<<<<<< HEAD
-            n_cell_types = len(np.unique(T))
-
-    
-            neighborhood_abundances = np.zeros((n_cells, n_cell_types))
-
-            #Get spatial neighbor abundances using a KDTree
-            kdtree = KDTree(P)
-            
-            for i in tqdm(range(n_cells)):
-                neighbors = kdtree.query_ball_point(P[i], r=radius)
-                for neighbor in neighbors:
-                    neighborhood_abundances[i, T[neighbor]] += 1
-            
-            #Save
-            np.save('neighborhood_abundances.npy', neighborhood_abundances)
-=======
-            
             #Reshape T to be a 2d array from a 1d array of strings
             T_ = np.zeros((n_cells, len(self.celltype2idx)))
             for i in range(n_cells):
@@ -266,9 +233,7 @@ class NeighborhoodAbundanceFeature(ModelFeature):
                 #Get the neighbors within the radius
                 neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
                 for neighbor in neighbors:
-                    neighborhood_abundances[i] += T[neighbor]
-
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
+                    neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
 
 class NeighborhoodMetageneFeature(ModelFeature):
@@ -365,8 +330,6 @@ class NeighborhoodMetageneFeature(ModelFeature):
             radius (float): Neighborhood radius.
         """
         return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
-<<<<<<< HEAD
-=======
             
 
 class MASSENLasso:
@@ -466,7 +429,6 @@ class MASSENLasso:
         u = np.sum((y - y_pred) ** 2)
         v = np.sum((y - np.mean(y)) ** 2)
         return 1 - u / v
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
 
 class HMRF:
     def __init__(self, num_states, max_iterations=100, smooth_factor=1.0, convergence_threshold=1e-4):
@@ -810,23 +772,15 @@ class ModularTranscriptSpace:
         #For each gene train a new MASSENLasso and add the coefficient slice to the coefficient matrix
         #Coefficient matrix of shape (in_features, out_features)
 
-<<<<<<< HEAD
-        in_feature_dim = sum([list(feature.get_feature())[0].shape[1] for i, feature in enumerate(self.in_features)])
-=======
         #in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
         in_feature_dim = sum([len(list(feature.get_feature()[1].values())) for feature in self.in_features])
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
         out_feature_dim = self.out_feature.data.G.shape[1]
 
         in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
         out_feature_names = self.out_feature.data.gene_names
 
-<<<<<<< HEAD
-        self.coefficients = np.zeros((in_feature_dim-1, out_feature_dim))
-=======
         self.coefficients = np.zeros((in_feature_dim, out_feature_dim))
         print(self.coefficients.shape)
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
 
         #Get l1 ratio, n_resamples, and stability threshold from kwargs
         l1_ratio = kwargs.get('l1_ratio', 0.5)
@@ -845,7 +799,7 @@ class ModularTranscriptSpace:
             y = self.out_feature.G[:, i]
             X = np.concatenate([feature['matrix'] * np.sqrt(1/np.array((feature['alpha']))) for feature in feature_attributes], axis=1)
 
-<<<<<<< HEAD
+
             c = []
             for r in range(n_resamples):
                 X, y = resample(X, y)
@@ -853,19 +807,6 @@ class ModularTranscriptSpace:
                 model.fit(X, y)
                 
                 sample_coeffs = model.coef_
-                c.append(sample_coeffs)
-=======
-            #Get X for cell type
-            X = X[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
-            y = y[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
-            model = Lasso(alpha=1e-3)
-            model.fit(X, y)
-            
-            coeffs = model.coef_
-
-            coeffs = np.insert(coeffs, i, 0)
-            print(coeffs.shape)
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e
             
             #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
             times_existed = np.sum(np.array(c) != 0, axis=0)
@@ -1242,28 +1183,6 @@ class SpatialStastics:
 
         return eigenvectors, eigenvalues
 
-<<<<<<< HEAD
-if __name__ == "__main__":
-    
-    st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
-    
-    st.filter_genes(st.covariance_threshold, **{'threshold': 0.5})
-    gene_expression_feature = GeneExpressionFeature(st, t='epithelial.cancer.subtype_1')
-    cell_type_abundances = NeighborhoodAbundanceFeature(st)
-    model = ModularTranscriptSpace([gene_expression_feature, cell_type_abundances], gene_expression_feature, alphas=[1.0, 1.0])
-    coeffs = model.fit(l1_ratio=0.9, out_path='new_coefficients')
-    
-    coefficients = np.load('coefficients\\coefficients.npy')
-    in_features = np.load('coefficients\\in_features.npy')
-    out_features = np.load('coefficients\\out_features.npy')
-
-    feature_matrix = CoefficientFeatureMatrix(coefficients, in_features, out_features)
-
-    analysis = CoefficientAnalysis(feature_matrix, 0.5)
-    #analysis.plot_coefficient_graph()
-    communitites = analysis.get_graph_communities()
-    print(communitites)
-=======
 def genetic_covariance_threshold(G):
     percentile_threshold = 0.75
     cov = np.cov(G)
@@ -1278,4 +1197,3 @@ if __name__ == "__main__":
     neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
     modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0], cell_type='Treg')
     modular_transcript_space.fit(l1_ratio=0.5, n_resamples=1, stability_threshold=0.5, out_path='coefficients')
->>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e

@@ -10,6 +10,14 @@ from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
+#Get KDTrees for spatial queries
+from scipy.spatial import KDTree
+from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import Lasso
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 class SpatialTranscriptomicsData:
     """
@@ -33,7 +41,7 @@ class SpatialTranscriptomicsData:
         self.annotation_path = os.path.join(root_path, f"{name}_annotation.json")
 
         #Load all of the core data primtives representing the data
-        self.G = np.load(self.G_path)
+        self.G = np.load(self.G_path)[:, ::10]
         self.P = np.load(self.P_path)
         self.T = np.load(self.T_path)
 
@@ -41,7 +49,10 @@ class SpatialTranscriptomicsData:
         #Load annotations for cell types and gene names, needed for interpretability
         self.annotations = json.load(open(self.annotation_path))
         self.cell_types = self.annotations['cell_types']
-        self.gene_names = self.annotations['gene_names']
+        self.gene_names = self.annotations['gene_names'][::10]
+
+        for gene in self.gene_names:
+            print(gene)
 
         self.map_dicts()
     
@@ -51,6 +62,25 @@ class SpatialTranscriptomicsData:
 
         self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
+    
+    @staticmethod
+    def covariance_threshold(G, **kwargs):
+        threshold = kwargs.get('threshold', 0.5)
+
+        #Get only the genes with the highest average covariance (If this gene changes, other genes are likely to change as well)
+        cov_matrix = np.cov(G, rowvar=False)
+        avg_cov = np.mean(cov_matrix, axis=0)
+        percentile = np.percentile(avg_cov, threshold * 100)
+        gene_indices = np.where(avg_cov > percentile)[0]
+
+        return gene_indices
+
+    def filter_genes(self, filter:callable, **kwargs):
+        gene_indices = filter(self.G, **kwargs)
+        self.G = self.G[:, gene_indices]
+        self.gene_names = [self.gene_names[idx] for idx in gene_indices]
+
+        self.map_dicts()
     
     def remap_metagenes(self, metagenes:Union[list[tuple[str, list[str]]], list[tuple[str, list[str], float]]]):
         """
@@ -119,10 +149,19 @@ class ModelFeature:
 
 class GeneExpressionFeature(ModelFeature):
 
-    def __init__(self, data:SpatialTranscriptomicsData):
+    def __init__(self, data:SpatialTranscriptomicsData, t:Union[str, int, None]):
         super().__init__("gene_expression")
 
         self.data = data
+
+        if t is not None:
+            if isinstance(t, str):
+                self.t = self.data.celltype2idx[t]
+            else:
+                self.t = t
+        
+        i = np.where(self.data.T == self.t)
+        self.data.G = self.data.G[i]
     
     def compute_feature(self, **kwargs):
         self.G = self.data.G
@@ -175,24 +214,21 @@ class NeighborhoodAbundanceFeature(ModelFeature):
 
         def _compute_neighborhood_abundances(self, G, P, T, radius):
             n_cells = G.shape[0]
-            n_cell_types = T.shape[1]
+            n_cell_types = len(np.unique(T))
+
     
             neighborhood_abundances = np.zeros((n_cells, n_cell_types))
-    
-            for i in range(n_cells):
-                cell_type = T[i].nonzero()[1][0]
-                neighborhood_abundances[i, cell_type] += 1
-    
-                for j in range(n_cells):
-                    if i == j:
-                        continue
-    
-                    distance = np.linalg.norm(P[i] - P[j])
-    
-                    if distance <= radius:
-                        cell_type = T[j].nonzero()[1][0]
-                        neighborhood_abundances[i, cell_type] += 1
-    
+
+            #Get spatial neighbor abundances using a KDTree
+            kdtree = KDTree(P)
+            
+            for i in tqdm(range(n_cells)):
+                neighbors = kdtree.query_ball_point(P[i], r=radius)
+                for neighbor in neighbors:
+                    neighborhood_abundances[i, T[neighbor]] += 1
+            
+            #Save
+            np.save('neighborhood_abundances.npy', neighborhood_abundances)
             return neighborhood_abundances
 
 class NeighborhoodMetageneFeature(ModelFeature):
@@ -258,71 +294,6 @@ class NeighborhoodMetageneFeature(ModelFeature):
 
     def get_feature(self, **kwargs):
         return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
-            
-
-class MASSENLasso:
-    """
-    This module implements a MASSEN (multi alpha stability selection elastic net) lasso model.
-    """
-
-    def __init__(self, l:int, alphas:np.array, l1_ratio:float, n_resamples:50, stability_threshold:float):
-        self.l = l
-        self.alphas = alphas * l
-        self.l1_ratio = l1_ratio
-        self.n_resamples = n_resamples
-        self.stability_threshold = stability_threshold
-
-        self.scaler = StandardScaler()
-        self.selected_features_ = None
-        self.coef_ = None
-
-    
-    def _objective(self, coef, X, y):
-        residual = y - X @ coef
-        rss = np.sum(residual ** 2)
-
-        l1_penalty = np.sum(self.alphas * np.abs(coef))
-        l2_penalty = np.sum((1-self.alphas) * coef ** 2)
-
-        reg = self.l1_ratio * l1_penalty (1 - self.l1_ratio) * l2_penalty
-
-        return 0.5 * rss + reg
-    
-    def fit(self, X, y):
-        X = self.scaler.fit_transform(X)
-        
-        selection_counts = np.zeros(X.shape[1]) #Helper vector to perform stability selection
- 
-        for _ in range(self.n_resamples):
-            X_resampled, y_resampled = resample(X, y)
-
-            initial_coef = np.zeros(X_resampled.shape[1])
-
-            result = minimize(self._objective, initial_coef, args=(X_resampled, y_resampled), method='L-BFGS-B')
-            coef_resampled = result.x
-            selection_counts += (np.abs(coef_resampled) > 1e-5).astype(int)
-        
-        self.selected_features_ = np.where(selection_counts / self.n_resamples >= self.stability_threshold)[0]
-
-        if len(self.selected_features_) >= 0:
-            X_selected = X[:, self.selected_features_]
-            initial_coef = np.zeros(X_selected.shape[1])
-            result = minimize(self._objective, initial_coef, args=(X_selected, y), method='L-BFGS-B')
-            self.coef_ = np.zeros(X.shape[1])
-            self.coef_[self.selected_features_] = result.x
-        
-        else:
-            self.coef_ = np.zeros(X.shape[1])
-    
-    def predict(self, X):
-        X = self.scalar.transform(X)
-        return X @ self.coef_
-
-    def score(self, X, y):
-        y_pred=  self.predict(X)
-        u = np.sum((y - y_pred) ** 2)
-        v = np.sum((y - np.mean(y)) ** 2)
-        return 1 - u / v
 
 class HMRF:
     def __init__(self, num_states, max_iterations=100, smooth_factor=1.0, convergence_threshold=1e-4):
@@ -610,17 +581,17 @@ class ModularTranscriptSpace:
         #For each gene train a new MASSENLasso and add the coefficient slice to the coefficient matrix
         #Coefficient matrix of shape (in_features, out_features)
 
-        in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
-        out_feature_dim = self.out_features[0].data.G.shape[1]
+        in_feature_dim = sum([list(feature.get_feature())[0].shape[1] for i, feature in enumerate(self.in_features)])
+        out_feature_dim = self.out_feature.data.G.shape[1]
 
         in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
-        out_feature_names = self.out_features[0].data.gene_names
+        out_feature_names = self.out_feature.data.gene_names
 
-        self.coefficients = np.zeros((in_feature_dim, out_feature_dim))
+        self.coefficients = np.zeros((in_feature_dim-1, out_feature_dim))
 
         #Get l1 ratio, n_resamples, and stability threshold from kwargs
         l1_ratio = kwargs.get('l1_ratio', 0.5)
-        n_resamples = kwargs.get('n_resamples', 50)
+        n_resamples = kwargs.get('n_resamples', 4)
         stability_threshold = kwargs.get('stability_threshold', 0.5)
 
         out_path = kwargs.get('out_path', 'coefficients')
@@ -628,24 +599,31 @@ class ModularTranscriptSpace:
         for i in tqdm(range(out_feature_dim)):
             feature_attributes = []
             for feature in self.in_features:
-                epoch_feature_matrix, epoch_idx2feature, epoch_feature_alpha = feature.get_feature(exclude_genes=[self.out_features[0].data.idx2gene[i]], alpha=self.alphas[self.in_features.index(feature)])
+                epoch_feature_matrix, epoch_idx2feature, epoch_feature_alpha = feature.get_feature(exclude_genes=[self.out_feature.data.idx2gene[i]], alpha=self.alphas[self.in_features.index(feature)])
                 feature_dict = {'matrix': epoch_feature_matrix, 'idx2feature': epoch_idx2feature, 'alpha': epoch_feature_alpha}
                 feature_attributes.append(feature_dict)
             
-            X = np.concatenate([feature['matrix'] for feature in feature_attributes], axis=1)
             y = self.out_feature.G[:, i]
+            X = np.concatenate([feature['matrix'] * np.sqrt(1/np.array((feature['alpha']))) for feature in feature_attributes], axis=1)
 
-            model = MASSENLasso(l=1e-3, alphas=flatten_list([fd['alpha'] for fd in feature_attributes]), l1_ratio=l1_ratio, n_resamples=n_resamples, stability_threshold=stability_threshold)
-            model.fit(X, y)
+            c = []
+            for r in range(n_resamples):
+                X, y = resample(X, y)
+                model = ElasticNet(alpha=1e-3, l1_ratio=l1_ratio)
+                model.fit(X, y)
+                
+                sample_coeffs = model.coef_
+                c.append(sample_coeffs)
             
-            coeffs = model.coef_
-            #Insert 0s for the genes that were excluded
-            for feature in feature_attributes:
-                if feature['idx2feature'] == self.out_features[0].data.idx2gene[i]:
-                    continue
-                else:
-                    coeffs = np.insert(coeffs, feature['idx2feature'], 0)
-            
+            #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
+            times_existed = np.sum(np.array(c) != 0, axis=0)
+            mean_coeffs = np.mean(np.array(c), axis=0)
+
+            print(mean_coeffs.shape)
+            coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
+            print(coeffs.shape)
+            print(self.coefficients.shape)
+                
             self.coefficients[:, i] = coeffs
 
         self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
@@ -657,8 +635,18 @@ class CoefficientAnalysis:
     def __init__(self, coefficient_matrix:CoefficientFeatureMatrix, graph_threshold):
         self.coefficient_matrix = coefficient_matrix
 
+        self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
 
+
+    def zero_diagonal(self):
+        m = self.coefficient_matrix.coefficients.shape[1]
+        # Create a zero matrix of shape (m, m)
+        new_matrix = np.zeros((m, m))
+
+        # Fill the new matrix with the original data
+        new_matrix[~np.eye(m, dtype=bool)] = self.coefficient_matrix.coefficients.ravel()
+        self.coefficient_matrix.coefficients = new_matrix
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
@@ -669,6 +657,14 @@ class CoefficientAnalysis:
                     G.add_edge(in_feature, out_feature, weight=weight)
         
         return G
+
+    def plot_coefficient_graph(self, **kwargs):
+        #Get the layout
+        layout = kwargs.get('layout', 'spring')
+        pos = nx.spring_layout(self.graph)
+        nx.draw(self.graph, pos, with_labels=True)
+
+        plt.show()
     
     def __str__(self):
         return f"Graph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
@@ -994,7 +990,22 @@ class SpatialStastics:
         return eigenvectors, eigenvalues
 
 if __name__ == "__main__":
+    
     st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
+    
+    st.filter_genes(st.covariance_threshold, **{'threshold': 0.5})
+    gene_expression_feature = GeneExpressionFeature(st, t='epithelial.cancer.subtype_1')
+    cell_type_abundances = NeighborhoodAbundanceFeature(st)
+    model = ModularTranscriptSpace([gene_expression_feature, cell_type_abundances], gene_expression_feature, alphas=[1.0, 1.0])
+    coeffs = model.fit(l1_ratio=0.9, out_path='new_coefficients')
+    
+    coefficients = np.load('coefficients\\coefficients.npy')
+    in_features = np.load('coefficients\\in_features.npy')
+    out_features = np.load('coefficients\\out_features.npy')
 
-    print(st.gene_names)
-    print(st.cell_types)
+    feature_matrix = CoefficientFeatureMatrix(coefficients, in_features, out_features)
+
+    analysis = CoefficientAnalysis(feature_matrix, 0.5)
+    #analysis.plot_coefficient_graph()
+    communitites = analysis.get_graph_communities()
+    print(communitites)

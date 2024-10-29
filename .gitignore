@@ -1,1 +1,4 @@
 data/
+neighborhood_abundances.npy
+coefficients/
+new_coefficients/

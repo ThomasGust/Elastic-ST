@@ -1,4 +1,8 @@
 data/
+<<<<<<< HEAD
 neighborhood_abundances.npy
 coefficients/
 new_coefficients/
+=======
+pychache/
+>>>>>>> 15ea3d8c39c130855c3d1b348cc1be3bc143da3e

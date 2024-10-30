@@ -516,7 +516,20 @@ class SpatialStastics:
         return expression, position
 
     def compute_gene_covariance_matrix(self, **kwargs):
-        """Does not take into account any spatial information, relies purely on expression data"""
+        r"""
+        Computes the covariance matrix of gene expression values without considering spatial position.
+
+        **Formula**:
+        Given expression matrix `E` with `N` cells (rows) and `G` genes (columns), the centered expression `E_c` is:
+        
+        .. math::
+            E_c = E - \text{mean}(E, \text{axis}=0)
+        
+        Then, the covariance matrix `\Sigma` is:
+        
+        .. math::
+            \Sigma = \frac{1}{N-1} E_c^T E_c
+        """
         #Get cell type
         expression, _ = self.get_expression_position_(kwargs)
         expression_centered = expression - np.mean(expression, axis=0)
@@ -525,7 +538,17 @@ class SpatialStastics:
     
 
     def compute_moran_I(self, **kwargs):
+        r"""
+        Computes Moran's I statistic to measure spatial autocorrelation in gene expression.
 
+        **Formula**:
+        Let `W` be a spatial weights matrix and `E` the centered expression. For each gene `g`, Moran's I is:
+        
+        .. math::
+            I_g = \frac{N}{\sum_{i \neq j} W_{ij}} \frac{\sum_{i \neq j} W_{ij} E_{i,g} E_{j,g}}{\sum_i E_{i,g}^2}
+        
+        where `N` is the number of cells, `W` represents spatial proximity between cells, and `E_{i,g}` is the expression of gene `g` in cell `i`.
+        """
         #Get threshold distance
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
@@ -555,7 +578,17 @@ class SpatialStastics:
         return morans_I
 
     def compute_geary_C(self, **kwargs):
-        """Bad implementation, currently is not vectorized for memory purposes"""
+        r"""
+        Calculates Geary’s C statistic for spatial autocorrelation, where lower values indicate stronger positive spatial autocorrelation.
+
+        **Formula**:
+        For each gene `g`, Geary’s C is given by:
+        
+        .. math::
+            C_g = \frac{(N - 1)}{2 \sum_{i \neq j} W_{ij}} \frac{\sum_{i \neq j} W_{ij} (E_{i,g} - E_{j,g})^2}{\sum_i (E_{i,g} - \bar{E}_g)^2}
+        
+        where `\bar{E}_g` is the mean expression of gene `g`.
+        """
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
@@ -584,6 +617,17 @@ class SpatialStastics:
         return gearys_C
 
     def compute_getis_ord_Gi(self, **kwargs):
+        r"""
+        Computes Getis-Ord \( G_i^* \) statistic, which identifies clusters of high or low values in gene expression data.
+
+        **Formula**:
+        For gene `g` in cell `i`:
+        
+        .. math::
+            G_{i,g}^* = \frac{\sum_j W_{ij} E_{j,g} - \bar{E}_g \sum_j W_{ij}}{\sigma_g \sqrt{\frac{N \sum_j W_{ij}^2 - (\sum_j W_{ij})^2}{N-1}}}
+        
+        where `\bar{E}_g` is the mean expression, and `\sigma_g` is the standard deviation of expression for gene `g`.
+        """
 
         threshold_dist = kwargs.get('threshold_dist', 1.0)
         expression, position = self.get_expression_position_(kwargs)
@@ -610,6 +654,17 @@ class SpatialStastics:
         return Gi_values
     
     def compute_ripleys_K(self, **kwargs):
+        r"""
+        Calculates Ripley’s K function to examine the spatial distribution of points.
+
+        **Formula**:
+        For distance `d`, Ripley’s K is:
+        
+        .. math::
+            K(d) = \frac{A}{N^2} \sum_{i=1}^N \sum_{j \neq i} I(d_{ij} \leq d)
+        
+        where `A` is the area, `N` is the number of cells, `d_{ij}` is the distance between cells `i` and `j`, and `I` is an indicator function.
+        """
         distances = kwargs.get('distances', np.linspace(0, 1, 100))
         area = kwargs.get('area', 1.0)
 
@@ -630,6 +685,17 @@ class SpatialStastics:
         return Kv
 
     def compute_lisa(self, **kwargs):
+        r"""
+        Local Indicator of Spatial Association (LISA) statistic for identifying local autocorrelation.
+
+        **Formula**:
+        For each gene `g` in cell `i`:
+        
+        .. math::
+            \text{LISA}_{i,g} = \frac{E_{i,g} - \bar{E}_g}{\sigma_g^2} \sum_j W_{ij} (E_{j,g} - \bar{E}_g)
+        
+        where `\bar{E}_g` and `\sigma_g^2` are the mean and variance of `g` expression.
+        """
         threshold_dist = kwargs.get('threshold_dist', 1.0)
         expression, position = self.get_expression_position_(kwargs)
 
@@ -651,8 +717,17 @@ class SpatialStastics:
         return lisa
     
     def compute_disperion_index(self, **kwargs):
-        """Also does not take into account spatial information"""
+        r"""
+        Calculates the dispersion index to indicate the level of variation in gene expression.
 
+        **Formula**:
+        For each gene `g`:
+        
+        .. math::
+            \text{Dispersion Index}_g = \frac{\text{Var}(E_g)}{\text{Mean}(E_g)}
+        
+        where Var and Mean represent the variance and mean of gene expression.
+        """
         expression, _ = self.get_expression_position_(kwargs)
 
         expression_mean = np.mean(expression, axis=0)+1e-6
@@ -663,6 +738,17 @@ class SpatialStastics:
         return dispersion_index
     
     def compute_spatial_cross_correlation(self, **kwargs):
+        r"""
+        Measures spatial correlation between gene expression pairs across spatially close cells.
+
+        **Formula**:
+        Given weights `W` and centered expression `E_c`, the cross-correlation between genes `g_1` and `g_2` is:
+        
+        .. math::
+            \rho_{g1,g2} = \frac{(W E_c)_{g1}^T (W E_c)_{g2}}{\|E_{c,g1}\| \|E_{c,g2}\|}
+        
+        where `\| \cdot \|` denotes the vector norm.
+        """
         """Finds spatial correlation between pairs of genes"""
         threshold_dist = kwargs.get('threshold_dist', 1.0)
         expression, position = self.get_expression_position_(kwargs)
@@ -685,6 +771,17 @@ class SpatialStastics:
         return cross_corr_matrix
     
     def compute_spatial_co_occurence(self, **kwargs):
+        r"""
+        Calculates co-occurrence of gene expressions above a specified threshold.
+
+        **Formula**:
+        For genes `g_1` and `g_2`, co-occurrence is:
+        
+        .. math::
+            \text{Co-occurrence}_{g1,g2} = \frac{\text{Count}(W \times H_{g1} \times H_{g2})}{\text{Count}(H_{g1}) \times \text{Count}(H_{g2})}
+        
+        where `H_g` is an indicator for high expression.
+        """
         threshold_distance = kwargs.get('threshold_distance', 1.0)
         expression_threshold = kwargs.get('expression_threshold', 0.5)
 
@@ -709,6 +806,17 @@ class SpatialStastics:
         return co_occurence_matrix
     
     def compute_mark_correlation_function(self, **kwargs):
+        r"""
+        Examines spatial correlation of gene expression marks over varying distances.
+
+        **Formula**:
+        For distance `d`, the mark correlation for gene `g` is:
+        
+        .. math::
+            M_g(d) = \frac{\sum_{i \neq j} I(d_{ij} \leq d) E_{i,g} E_{j,g}}{\sum_{i \neq j} I(d_{ij} \leq d)}
+        
+        where `I(d_{ij} \leq d)` indicates cells within distance `d`.
+        """
         distances_to_evaluate = kwargs.get('distances', np.linspace(0, 1, 100))
         expression, position = self.get_expression_position_(kwargs)
         N = position.shape[0]
@@ -735,6 +843,16 @@ class SpatialStastics:
         return mark_corr_values
     
     def bivariate_morans_I(self, **kwargs):
+        r"""
+        Computes bivariate Moran's I, examining spatial correlation between pairs of genes.
+
+        **Formula**:
+        For genes `g_1` and `g_2`:
+        
+        .. math::
+            I_{g1,g2} = \frac{N}{\sum_{i \neq j} W_{ij}} \frac{\sum_{i \neq j} W_{ij} E_{i,g1} E_{j,g2}}{\|E_{c,g1}\| \|E_{c,g2}\|}
+        
+        """
         threshold_distance = kwargs.get('threshold_distance', 1.0)
         expression, position = self.get_expression_position_(kwargs)
 
@@ -760,6 +878,17 @@ class SpatialStastics:
         return bivariate_morans_I
     
     def spatial_eigenvector_mapping(self, **kwargs):
+        r"""
+        Calculates eigenvectors of the spatial Laplacian matrix for mapping spatial autocorrelation patterns.
+
+        **Formula**:
+        Construct the Laplacian `L = D - W`, where `D` is the degree matrix of `W`. Solve:
+        
+        .. math::
+            L \mathbf{v} = \lambda \mathbf{v}
+        
+        where `\mathbf{v}` and `\lambda` are eigenvectors and eigenvalues, sorted by smallest `\lambda`.
+        """
         threshold_distance = kwargs.get('threshold_distance', 1.0)
         expression, position = self.get_expression_position_(kwargs)
 

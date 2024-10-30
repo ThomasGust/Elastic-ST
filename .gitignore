@@ -1,2 +1,7 @@
 data/
 pychache/
+coefficients/
+new_coefficients/
+statistics.npz
+sample_statistics/
+sample_statistics.zip

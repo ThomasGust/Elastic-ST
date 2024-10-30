@@ -13,6 +13,11 @@ from scipy.stats import multivariate_normal
 from sklearn.linear_model import Lasso
 #Get KDTree from sklearn
 from sklearn.neighbors import KDTree
+import matplotlib.pyplot as plt
+from sklearn.linear_model import ElasticNet
+from scipy.sparse import lil_matrix
+from scipy.spatial import cKDTree
+import json
 
 class SpatialTranscriptomicsData:
     """
@@ -26,25 +31,16 @@ class SpatialTranscriptomicsData:
     - gene_names: a list of gene names
     """
 
-    def __init__(self, root_path:str, name:str):
-        self.root_path = root_path
-        self.name = name
-
-        self.G_path = os.path.join(root_path, f"{name}_G.npy")
-        self.P_path = os.path.join(root_path, f"{name}_P.npy")
-        self.T_path = os.path.join(root_path, f"{name}_T.npy")
-        self.annotation_path = os.path.join(root_path, f"{name}_annotation.json")
-
-        #Load all of the core data primtives representing the data
-        self.G = np.load(self.G_path)[:, ::10]
-        self.P = np.load(self.P_path)
-        self.T = np.load(self.T_path)
+    def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
+        self.G = G
+        self.P = P
+        self.T = T
 
 
         #Load annotations for cell types and gene names, needed for interpretability
-        self.annotations = json.load(open(self.annotation_path))
+        self.annotations = annotations
         self.cell_types = self.annotations['cell_types']
-        self.gene_names = self.annotations['gene_names'][::10]
+        self.gene_names = self.annotations['gene_names']
 
         self.map_dicts()
     
@@ -61,6 +57,25 @@ class SpatialTranscriptomicsData:
         self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
     
+    @staticmethod
+    def covariance_threshold(G, **kwargs):
+        threshold = kwargs.get('threshold', 0.5)
+
+        #Get only the genes with the highest average covariance (If this gene changes, other genes are likely to change as well)
+        cov_matrix = np.cov(G, rowvar=False)
+        avg_cov = np.mean(cov_matrix, axis=0)
+        percentile = np.percentile(avg_cov, threshold * 100)
+        gene_indices = np.where(avg_cov > percentile)[0]
+
+        return gene_indices
+
+    def filter_genes(self, filter:callable, **kwargs):
+        gene_indices = filter(self.G, **kwargs)
+        self.G = self.G[:, gene_indices]
+        self.gene_names = [self.gene_names[idx] for idx in gene_indices]
+
+        self.map_dicts()
+    
     def remap_metagenes(self, metagenes:Union[list[tuple[str, list[str]]], list[tuple[str, list[str], float]]]):
         """
         Instead of having cellxgenes, the expression matrix G will now have cellxmetagenes. This is useful for reducing the dimensionality of the data and revealing better biological insights.
@@ -73,9 +88,13 @@ class SpatialTranscriptomicsData:
         normalized_G = self.G / np.sum(self.G, axis=1)[:, np.newaxis]
         if len(list(metagenes[0])) == 2:
             #No weights
-            for metagene in metagenes:
+            for metagene in tqdm(metagenes):
                 metagene_name, gene_names = metagene
-                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                gene_indices = []
+                for gene in gene_names:
+                    if gene in self.gene2idx:
+                        gene_indices.append(self.gene2idx[gene])
                 new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices], axis=1)
                 metagene_names.append(metagene_name)
 
@@ -83,12 +102,17 @@ class SpatialTranscriptomicsData:
             #Weights
             for metagene in metagenes:
                 metagene_name, gene_names, weights = metagene
-                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                gene_indices = []
+                for gene in gene_names:
+                    if gene in self.gene2idx:
+                        gene_indices.append(self.gene2idx[gene])
                 new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices] * weights, axis=1)
                 metagene_names.append(metagene_name)
         
         self.G = new_G
         self.gene_names = metagene_names
+        self.map_dicts()
 
 class FeatureSetData:
     """
@@ -123,10 +147,19 @@ class ModelFeature:
 
 class GeneExpressionFeature(ModelFeature):
 
-    def __init__(self, data:SpatialTranscriptomicsData):
+    def __init__(self, data:SpatialTranscriptomicsData, t:Union[str, int, None]):
         super().__init__("gene_expression")
 
         self.data = data
+
+        if t is not None:
+            if isinstance(t, str):
+                self.t = self.data.celltype2idx[t]
+            else:
+                self.t = t
+        
+        i = np.where(self.data.T == self.t)
+        self.data.G = self.data.G[i]
     
     def compute_feature(self, **kwargs):
         self.G = self.data.G
@@ -185,7 +218,6 @@ class NeighborhoodAbundanceFeature(ModelFeature):
 
         def _compute_neighborhood_abundances(self, G, P, T, radius):
             n_cells = G.shape[0]
-            
             #Reshape T to be a 2d array from a 1d array of strings
             T_ = np.zeros((n_cells, len(self.celltype2idx)))
             for i in range(n_cells):
@@ -204,8 +236,7 @@ class NeighborhoodAbundanceFeature(ModelFeature):
                 #Get the neighbors within the radius
                 neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
                 for neighbor in neighbors:
-                    neighborhood_abundances[i] += T[neighbor]
-
+                    neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
 
 class NeighborhoodMetageneFeature(ModelFeature):
@@ -303,378 +334,6 @@ class NeighborhoodMetageneFeature(ModelFeature):
         """
         return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
             
-
-class MASSENLasso:
-    """
-    This module implements a MASSEN (multi alpha stability selection elastic net) lasso model.
-    """
-
-    def __init__(self, l:int, alphas:np.array, l1_ratio:float, n_resamples:50, stability_threshold:float):
-
-        """
-        Parameters:
-            l (int): Number of Lasso regularization parameters.
-            alphas (numpy.ndarray): Array of Lasso regularization parameters.
-            l1_ratio (float): Ratio of L1 penalty.
-            n_resamples (int): Number of resamples for stability selection.
-            stability_threshold (float): Threshold for stability selection
-        """
-        self.l = l
-        self.alphas = np.array(alphas)
-        self.l1_ratio = l1_ratio
-        self.n_resamples = n_resamples
-        self.stability_threshold = stability_threshold
-
-        self.scaler = StandardScaler()
-        self.selected_features_ = None
-        self.coef_ = None
-
-    
-    def _objective(self, coef:np.array, X:np.array, y:np.array):
-        """
-        Objective function for the MASSENLasso model. This mixes a L1 Ratio with the the 
-        Parameters:
-            coef (numpy.ndarray): Coefficients.
-            X (numpy.ndarray): Input features.
-            y (numpy.ndarray): Output features.
-        """
-        residual = y - X @ coef
-        rss = np.sum(residual ** 2)
-
-        l1_penalty = np.sum(self.alphas * np.abs(coef))
-        l2_penalty = np.sum((1-self.alphas) * coef ** 2)
-
-        #reg = self.l1_ratio * l1_penalty (1 - self.l1_ratio) * l2_penalty
-        reg = self.l1_ratio * l1_penalty + (1 - self.l1_ratio) * l2_penalty
-
-        return 0.5 * rss + reg
-    
-    def fit(self, X:np.array, y:np.array):
-        """
-        Parameters:
-            X (numpy.ndarray): Input features.
-            y (numpy.ndarray): Output features.
-        """
-        X = self.scaler.fit_transform(X)
-        
-        selection_counts = np.zeros(X.shape[1]) #Helper vector to perform stability selection
- 
-        for _ in range(self.n_resamples):
-            X_resampled, y_resampled = resample(X, y)
-
-            initial_coef = np.zeros(X_resampled.shape[1])
-
-            print("STARTING TO MINIMIZE")
-            print(X_resampled.shape)
-            print(y_resampled.shape)
-
-            result = minimize(self._objective, initial_coef, args=(X_resampled, y_resampled), method='L-BFGS-B')
-            coef_resampled = result.x
-            selection_counts += (np.abs(coef_resampled) > 1e-5).astype(int)
-        
-        self.selected_features_ = np.where(selection_counts / self.n_resamples >= self.stability_threshold)[0]
-
-        if len(self.selected_features_) >= 0:
-            X_selected = X[:, self.selected_features_]
-            initial_coef = np.zeros(X_selected.shape[1])
-            result = minimize(self._objective, initial_coef, args=(X_selected, y), method='L-BFGS-B')
-            self.coef_ = np.zeros(X.shape[1])
-            self.coef_[self.selected_features_] = result.x
-        else:
-            self.coef_ = np.zeros(X.shape[1])
-    
-    def predict(self, X:np.array):
-        """
-        Parameters :
-            X (numpy.ndarray): Input features.
-        """
-        X = self.scalar.transform(X)
-        return X @ self.coef_
-
-    def score(self, X, y):
-        """
-        Parameters:
-            X (numpy.ndarray): Input features.
-            y (numpy.ndarray): Output features.
-        """
-        y_pred=  self.predict(X)
-        u = np.sum((y - y_pred) ** 2)
-        v = np.sum((y - np.mean(y)) ** 2)
-        return 1 - u / v
-
-class HMRF:
-    def __init__(self, num_states, max_iterations=100, smooth_factor=1.0, convergence_threshold=1e-4):
-        """
-        Initialize the HMRF model. This is a Hidden Markov Random Field Model.
-        Essentially, it combines spatial and gene expression data to cluster groups of cells into subtypes.
-        
-        Parameters:
-            num_states (int): Number of hidden states (regions).
-            max_iterations (int): Maximum number of EM iterations.
-            smooth_factor (float): Spatial smoothness factor.
-            convergence_threshold (float): Threshold for convergence.
-        """
-        self.num_states = num_states
-        self.max_iterations = max_iterations
-        self.smooth_factor = smooth_factor
-        self.convergence_threshold = convergence_threshold
-
-    def fit(self, X, P, threshold_distance=10.0):
-        """
-        Fit the HMRF model to the spatial transcriptomics data.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
-            threshold_distance (float): Distance threshold for defining neighbors.
-        """
-        # Step 1: Normalize the expression data
-        X = (X - X.mean(axis=0)) / X.std(axis=0)
-
-        # Step 2: Create the neighborhood graph
-        self.graph = self._create_neighborhood_graph(P, threshold_distance)
-        N = X.shape[0]  # Number of cells
-
-        # Step 3: Initialize hidden states and parameters
-        self.hidden_states = np.random.randint(0, self.num_states, size=N)
-        self.means, self.variances = self._initialize_parameters(X, self.hidden_states)
-
-        # Step 4: EM algorithm
-        for iteration in range(self.max_iterations):
-            # E-step: Update state probabilities
-            state_probabilities = self._e_step(X)
-
-            # M-step: Update parameters
-            new_means, new_variances = self._m_step(X, state_probabilities)
-
-            # Check for convergence
-            max_change = np.max(np.abs(new_means - self.means))
-            if max_change < self.convergence_threshold:
-                print(f'Converged at iteration {iteration}')
-                break
-
-            # Update parameters
-            self.means, self.variances = new_means, new_variances
-
-        # Step 5: Assign final hidden states
-        self.hidden_states = np.argmax(state_probabilities, axis=1)
-
-    def _create_neighborhood_graph(self, P, threshold_distance):
-        """Create a neighborhood graph based on spatial coordinates.
-        Parameters:
-            P (numpy.ndarray): Cells-by-2 position matrix.
-            threshold_distance (float): Distance threshold for defining neighbors.
-        
-        """
-        distances = squareform(pdist(P))
-        G = nx.Graph()
-        for i in range(distances.shape[0]):
-            for j in range(i + 1, distances.shape[1]):
-                if distances[i, j] < threshold_distance:
-                    G.add_edge(i, j)
-        return G
-
-    def _initialize_parameters(self, X, hidden_states):
-        """
-        Initialize the mean and variance for each state.
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            hidden_states (numpy.ndarray): Hidden states for each cell.
-        """
-        means = np.zeros((self.num_states, X.shape[1]))
-        variances = np.zeros((self.num_states, X.shape[1]))
-        for state in range(self.num_states):
-            state_data = X[hidden_states == state]
-            if len(state_data) > 0:
-                means[state] = state_data.mean(axis=0)
-                variances[state] = state_data.var(axis=0) + 1e-6  # Add small value to avoid zero variance
-            else:
-                means[state] = np.random.rand(X.shape[1])
-                variances[state] = np.ones(X.shape[1])
-        return means, variances
-
-    def _e_step(self, X):
-        """
-        E-step: Compute the state probabilities for each cell.
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-        """
-        N = X.shape[0]
-        state_probabilities = np.zeros((N, self.num_states))
-
-        for i in range(N):
-            for state in range(self.num_states):
-                likelihood = multivariate_normal.pdf(X[i], mean=self.means[state], cov=np.diag(self.variances[state]))
-                prior = np.exp(-self.smooth_factor * self._spatial_energy(i, state))
-                state_probabilities[i, state] = likelihood * prior
-
-            # Normalize probabilities
-            state_probabilities[i] /= state_probabilities[i].sum()
-
-        return state_probabilities
-
-    def _m_step(self, X, state_probabilities):
-        """
-        M-step: Update the mean and variance for each state.
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            state_probabilities (numpy.ndarray): State probabilities for each cell.
-        """
-        new_means = np.zeros_like(self.means)
-        new_variances = np.zeros_like(self.variances)
-        for state in range(self.num_states):
-            weight_sum = state_probabilities[:, state].sum()
-            if weight_sum > 0:
-                new_means[state] = (state_probabilities[:, state][:, np.newaxis] * X).sum(axis=0) / weight_sum
-                new_variances[state] = (state_probabilities[:, state][:, np.newaxis] * (X - new_means[state])**2).sum(axis=0) / weight_sum + 1e-6
-        return new_means, new_variances
-
-    def _spatial_energy(self, i, state):
-        """
-        Calculate the spatial energy for cell i being in state.
-        Parameters:
-            i (int): Cell index.
-            state (int): State index.
-        """
-        energy = 0.0
-        for neighbor in self.graph.neighbors(i):
-            energy += int(self.hidden_states[neighbor] != state)
-        return energy
-
-    def predict(self):
-        """Return the predicted hidden states."""
-        return self.hidden_states
-
-class SpatialGMM:
-    def __init__(self, n_components, max_iterations=100, tol=1e-4, spatial_reg=1.0):
-        """
-        Initialize the Spatial GMM model. Similar to the HMRF, this model combines spatial information and expression data to
-        determine cell regions.
-        
-        Parameters:
-            n_components (int): Number of clusters.
-            max_iterations (int): Maximum number of EM iterations.
-            tol (float): Convergence threshold.
-            spatial_reg (float): Regularization parameter for spatial information.
-        """
-        self.n_components = n_components
-        self.max_iterations = max_iterations
-        self.tol = tol
-        self.spatial_reg = spatial_reg
-
-    def fit(self, X, P):
-        """
-        Fit the Spatial GMM model to the data.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
-        """
-        N, D = X.shape
-        
-        # Step 1: Initialize GMM parameters
-        self.means = X[np.random.choice(N, self.n_components, replace=False)]
-        self.covariances = np.array([np.cov(X, rowvar=False)] * self.n_components)
-        self.weights = np.full(self.n_components, 1 / self.n_components)
-        
-        # Step 2: EM algorithm
-        log_likelihood = -np.inf
-        for iteration in range(self.max_iterations):
-            # E-step: Calculate responsibilities
-            responsibilities = self._e_step(X, P)
-            
-            # M-step: Update parameters
-            self._m_step(X, responsibilities)
-            
-            # Check for convergence
-            new_log_likelihood = self._compute_log_likelihood(X, responsibilities)
-            if np.abs(new_log_likelihood - log_likelihood) < self.tol:
-                print(f'Converged at iteration {iteration}')
-                break
-            log_likelihood = new_log_likelihood
-
-    def _e_step(self, X, P):
-        """
-        E-step: Compute the responsibilities for each data point.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            P (numpy.ndarray): Cells-by-2 position matrix (spatial coordinates).
-        
-        Returns:
-            numpy.ndarray: Responsibilities matrix (N x n_components).
-        """
-        N = X.shape[0]
-        responsibilities = np.zeros((N, self.n_components))
-
-        # Compute Gaussian likelihood for each component
-        for k in range(self.n_components):
-            diff = X - self.means[k]
-            inv_cov = np.linalg.inv(self.covariances[k])
-            log_det_cov = np.linalg.slogdet(self.covariances[k])[1]
-            likelihood = np.exp(-0.5 * np.sum(diff @ inv_cov * diff, axis=1))
-            likelihood /= np.sqrt((2 * np.pi) ** X.shape[1] * np.exp(log_det_cov))
-
-            # Spatial regularization term
-            spatial_term = np.exp(-self.spatial_reg * cdist(P, [self.means[k, :2]]).flatten())
-            
-            # Combine likelihood and spatial term
-            responsibilities[:, k] = self.weights[k] * likelihood * spatial_term
-        
-        # Normalize responsibilities
-        responsibilities /= responsibilities.sum(axis=1, keepdims=True)
-        return responsibilities
-
-    def _m_step(self, X, responsibilities):
-        """
-        M-step: Update the GMM parameters.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            responsibilities (numpy.ndarray): Responsibilities matrix.
-        """
-        Nk = responsibilities.sum(axis=0)
-        
-        # Update weights
-        self.weights = Nk / Nk.sum()
-        
-        # Update means
-        self.means = (responsibilities.T @ X) / Nk[:, np.newaxis]
-        
-        # Update covariances
-        for k in range(self.n_components):
-            diff = X - self.means[k]
-            self.covariances[k] = (responsibilities[:, k][:, np.newaxis] * diff).T @ diff / Nk[k]
-            self.covariances[k] += 1e-6 * np.eye(X.shape[1])  # Regularize for stability
-
-    def _compute_log_likelihood(self, X, responsibilities):
-        """
-        Compute the log-likelihood of the data given the current model parameters.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-            responsibilities (numpy.ndarray): Responsibilities matrix.
-        
-        Returns:
-            float: Log-likelihood value.
-        """
-        log_likelihood = np.sum(np.log(responsibilities.sum(axis=1)))
-        return log_likelihood
-
-    def predict(self, X):
-        """
-        Predict cluster labels for new data.
-        
-        Parameters:
-            X (numpy.ndarray): Cells-by-genes expression matrix.
-        
-        Returns:
-            numpy.ndarray: Cluster labels for each cell.
-        """
-        responsibilities = self._e_step(X, np.zeros((X.shape[0], 2)))
-        return np.argmax(responsibilities, axis=1)
-
-
 def flatten_list(l:list):
     """
     Parameters:
@@ -756,7 +415,7 @@ class ModularTranscriptSpace:
 
         #Get l1 ratio, n_resamples, and stability threshold from kwargs
         l1_ratio = kwargs.get('l1_ratio', 0.5)
-        n_resamples = kwargs.get('n_resamples', 50)
+        n_resamples = kwargs.get('n_resamples', 4)
         stability_threshold = kwargs.get('stability_threshold', 0.5)
 
         out_path = kwargs.get('out_path', 'coefficients')
@@ -768,20 +427,27 @@ class ModularTranscriptSpace:
                 feature_dict = {'matrix': epoch_feature_matrix, 'idx2feature': epoch_idx2feature, 'alpha': epoch_feature_alpha}
                 feature_attributes.append(feature_dict)
             
-            X = np.concatenate([feature['matrix'] for feature in feature_attributes], axis=1)
             y = self.out_feature.G[:, i]
+            X = np.concatenate([feature['matrix'] * np.sqrt(1/np.array((feature['alpha']))) for feature in feature_attributes], axis=1)
 
-            #Get X for cell type
-            X = X[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
-            y = y[np.where(self.out_feature.data.T == self.out_feature.data.celltype2idx[self.cell_type])]
-            model = Lasso(alpha=1e-3)
-            model.fit(X, y)
+
+            c = []
+            for r in range(n_resamples):
+                X, y = resample(X, y)
+                model = ElasticNet(alpha=1e-3, l1_ratio=l1_ratio)
+                model.fit(X, y)
+                
+                sample_coeffs = model.coef_
             
-            coeffs = model.coef_
+            #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
+            times_existed = np.sum(np.array(c) != 0, axis=0)
+            mean_coeffs = np.mean(np.array(c), axis=0)
 
-            coeffs = np.insert(coeffs, i, 0)
+            print(mean_coeffs.shape)
+            coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
             print(coeffs.shape)
-            
+            print(self.coefficients.shape)
+                
             self.coefficients[:, i] = coeffs
 
 
@@ -794,8 +460,18 @@ class CoefficientAnalysis:
     def __init__(self, coefficient_matrix:CoefficientFeatureMatrix, graph_threshold):
         self.coefficient_matrix = coefficient_matrix
 
+        self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
 
+
+    def zero_diagonal(self):
+        m = self.coefficient_matrix.coefficients.shape[1]
+        # Create a zero matrix of shape (m, m)
+        new_matrix = np.zeros((m, m))
+
+        # Fill the new matrix with the original data
+        new_matrix[~np.eye(m, dtype=bool)] = self.coefficient_matrix.coefficients.ravel()
+        self.coefficient_matrix.coefficients = new_matrix
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
@@ -806,6 +482,14 @@ class CoefficientAnalysis:
                     G.add_edge(in_feature, out_feature, weight=weight)
         
         return G
+
+    def plot_coefficient_graph(self, **kwargs):
+        #Get the layout
+        layout = kwargs.get('layout', 'spring')
+        pos = nx.spring_layout(self.graph)
+        nx.draw(self.graph, pos, with_labels=True)
+
+        plt.show()
     
     def __str__(self):
         return f"Graph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
@@ -890,6 +574,8 @@ class SpatialStastics:
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
+        print(expression.shape)
+        print(position.shape)
         
         distances = squareform(pdist(position)) #Get pariwise euclidean distances between cells
 
@@ -902,40 +588,41 @@ class SpatialStastics:
         WG = W @ expression_centered
 
         numerator = np.sum(expression_centered * WG, axis=0)
-        denominator = np.sum(expression_centered ** 2, axis=0)
+        denominator = np.sum(expression_centered ** 2, axis=0)+1e-6
 
         #Scale by the number of cells and the sum of weights
         n_cells = expression.shape[0]
-        sum_weights = np.sum(W, axis=0)
+        sum_weights = np.sum(W)
 
         morans_I = (n_cells / sum_weights) * (numerator / denominator)
 
         return morans_I
 
     def compute_geary_C(self, **kwargs):
-        #Get threshold distance
+        """Bad implementation, currently is not vectorized for memory purposes"""
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
-
-        distances = squareform(pdist(position))
-
-        #Spatial weights matrix
-
-        W = (distances < threshold_dist).astype(float)
-        np.fill_diagonal(W, 0)
-
-        W_sum = np.sum(W, axis=0)
-
-        expression_centered = expression - np.mean(expression, axis=0)
-
-        differences_squared = (expression_centered[:, np.newaxis, :] - expression_centered[np.newaxis, :, :]) ** 2
-        weighted_diffs = W[:, :, np.newaxis] * differences_squared
-
-        numerator = np.sum(weighted_diffs, axis=(0, 1))
-        denominator = np.sum(expression_centered**2, axis=0)*2
-
         N = expression.shape[0]
+
+        # Center the expression values
+        expression_centered = expression - np.mean(expression, axis=0)
+        denominator = (np.sum(expression_centered**2, axis=0) * 2)+1e-6
+
+        tree = cKDTree(position)
+
+        numerator = np.zeros(expression.shape[1], dtype=np.float64)
+        W_sum = 0
+
+        for i in tqdm(range(N)):
+            neighbors = tree.query_ball_point(position[i], threshold_dist)
+
+            for j in neighbors:
+                if i != j:
+                    W_sum += 1
+                    diff_squared = (expression_centered[i] - expression_centered[j]) ** 2
+                    numerator += diff_squared
+
         gearys_C = ((N - 1) / W_sum) * (numerator / denominator)
 
         return gearys_C
@@ -960,27 +647,29 @@ class SpatialStastics:
 
         #Now we need the denominator for all cells and genes
         W_squared_sum = np.sum(W ** 2, axis=1)
-        denominator = expression_std * np.sqrt((N * W_squared_sum - W_sum ** 2) / (N - 1))[:, np.newaxis]
+        denominator = (expression_std * np.sqrt((N * W_squared_sum - W_sum ** 2) / (N - 1))[:, np.newaxis])+1e-6
 
         Gi_values = numerator/denominator
         
         return Gi_values
     
     def compute_ripleys_K(self, **kwargs):
-        #Get distances to evaluate
         distances = kwargs.get('distances', np.linspace(0, 1, 100))
         area = kwargs.get('area', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
-        distances = squareform(pdist(position))
-
         N = expression.shape[0]
 
-        indicators = (distances[:, :, np.newaxis] <= distances).astype(float)
-        weights = np.ones_like(indicators)
-        weighted_sums = np.sum(indicators * weights, axis=(0, 1))
+        tree = cKDTree(position)
 
-        Kv = (area / (N**2)) * weighted_sums
+        Kv = np.zeros_like(distances, dtype=np.float64)
+
+        for idx, d in enumerate(distances):
+            count_within_d = 0
+            for i in range(N):
+                neighbors = tree.query_ball_point(position[i], d)
+                count_within_d += len(neighbors) - 1  # Exclude self
+            Kv[idx] = (area / (N**2)) * count_within_d
 
         return Kv
 
@@ -995,7 +684,7 @@ class SpatialStastics:
 
         N = expression.shape[0]
         X_mean = np.mean(expression, axis=0)
-        X_var = np.var(expression, axis=0, ddof=1)
+        X_var = np.var(expression, axis=0, ddof=1)+1e-6
 
         X_centered = expression - X_mean
 
@@ -1010,7 +699,7 @@ class SpatialStastics:
 
         expression, _ = self.get_expression_position_(kwargs)
 
-        expression_mean = np.mean(expression, axis=0)
+        expression_mean = np.mean(expression, axis=0)+1e-6
         expression_var = np.var(expression, axis=0, ddof=1)
 
         dispersion_index = expression_var / expression_mean
@@ -1033,7 +722,7 @@ class SpatialStastics:
         numerator = spatial_lag.T @ spatial_lag
 
         norm = np.linalg.norm(expression_centered, axis=0)
-        denominator = np.outer(norm, norm)
+        denominator = np.outer(norm, norm)+1e-6
 
         cross_corr_matrix = numerator/denominator
 
@@ -1066,21 +755,26 @@ class SpatialStastics:
     def compute_mark_correlation_function(self, **kwargs):
         distances_to_evaluate = kwargs.get('distances', np.linspace(0, 1, 100))
         expression, position = self.get_expression_position_(kwargs)
-
-        distances = squareform(pdist(position))
         N = position.shape[0]
+        mark_corr_values = np.zeros((len(distances_to_evaluate), expression.shape[1]), dtype=np.float64)
 
-        mark_corr_values = np.zeros((len(distances_to_evaluate), expression.shape[1]))
-        mark_products = np.einsum('ij,ik->ijk', expression, expression)
+        tree = cKDTree(position)
 
-        indicators = distances[: , :, np.newaxis] <= distances_to_evaluate
+        for idx, d in enumerate(distances_to_evaluate):
+            weighted_mark_sum = np.zeros(expression.shape[1], dtype=np.float64)
+            valid_pairs = 0
 
-        weighted_mark_sum = np.einsum('ijk,ij->ik', indicators, mark_products)
+            for i in tqdm(range(N)):
+                neighbors = tree.query_ball_point(position[i], d)
+                for j in neighbors:
+                    if i != j:
+                        valid_pairs += 1
+                        weighted_mark_sum += expression[i] * expression[j]
 
-        valid_pairs = np.sum(indicators, axis=(0, 1))
-
-        valid_pairs[valid_pairs == 0] = 1
-        mark_corr_values = weighted_mark_sum / valid_pairs[:, np.newaxis]
+            if valid_pairs > 0:
+                mark_corr_values[idx] = weighted_mark_sum / valid_pairs
+            else:
+                mark_corr_values[idx] = 0
 
         return mark_corr_values
     
@@ -1093,7 +787,7 @@ class SpatialStastics:
         W = (distances < threshold_distance).astype(float)
         np.fill_diagonal(W, 0)
 
-        W_sum = np.sum(W, axis=0)
+        W_sum = np.sum(W)+1e-6
 
         expression_centered = expression - np.mean(expression, axis=0)
 
@@ -1104,7 +798,7 @@ class SpatialStastics:
         norm_X = np.sqrt(np.sum(expression_centered ** 2, axis=0))
         norm_Y = np.sqrt(np.sum(spatial_lag ** 2, axis=0))
 
-        denominator = np.outer(norm_X, norm_Y)
+        denominator = np.outer(norm_X, norm_Y)+1e-6
         bivariate_morans_I = (expression.shape[0] / W_sum) * (numerator / denominator)
 
         return bivariate_morans_I
@@ -1130,17 +824,127 @@ class SpatialStastics:
 
         return eigenvectors, eigenvalues
 
-def genetic_covariance_threshold(G):
-    percentile_threshold = 0.75
-    cov = np.cov(G)
-    cov_threshold = np.percentile(cov, percentile_threshold)
-    return cov_threshold
+    def get_mean_expression(self, **kwargs):
+        expression, _ = self.get_expression_position_(kwargs)
+        return np.mean(expression, axis=0)
+    
+    def get_variance_expression(self, **kwargs):
+        expression, _ = self.get_expression_position_(kwargs)
+        return np.var(expression, axis=0, ddof=1)
+    
+    def full_report(self, **kwargs):
+        #Compute all statistics
+        gene_covariance = self.compute_gene_covariance_matrix(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GENE COVARIANCE')
+        morans_I = self.compute_moran_I(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MORANS I')
+        gearys_C = self.compute_geary_C(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GEARYS C')
+        getis_ord_Gi = self.compute_getis_ord_Gi(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GETIS ORD GI')
+        ripley_K = self.compute_ripleys_K(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED RIPLEYS K')
+        lisa = self.compute_lisa(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED LISA')
+        dispersion_index = self.compute_disperion_index(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED DISPERSION INDEX')
+        spatial_cross_correlation = self.compute_spatial_cross_correlation(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL CROSS CORRELATION')
+        spatial_co_occurence = self.compute_spatial_co_occurence(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL CO OCCURENCE')
+        mark_correlation_function = self.compute_mark_correlation_function(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MARK CORRELATION FUNCTION')
+        bivariate_morans_I = self.bivariate_morans_I(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED BIVARIATE MORANS I')
+        spatial_eigenvectors, spatial_eigenvalues = self.spatial_eigenvector_mapping(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL EIGENVECTORS + EIGENVALUES')
+        mean_expression= self.get_mean_expression(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MEAN EXPRESSION')
+        variance_expression = self.get_variance_expression(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED VARIANCE EXPRESSION')
+
+        d = {'gene_covariance': gene_covariance,
+             'morans_I': morans_I,
+             'gearys_C': gearys_C,
+             'getis_ord_Gi': getis_ord_Gi,
+             'ripley_K': ripley_K,
+             'lisa': lisa,
+             'dispersion_index': dispersion_index,
+             'spatial_cross_correlation': spatial_cross_correlation,
+             'spatial_co_occurence': spatial_co_occurence,
+             'mark_correlation_function': mark_correlation_function,
+             'bivariate_morans_I': bivariate_morans_I,
+             'spatial_eigenvectors': spatial_eigenvectors,
+             'spatial_eigenvalues': spatial_eigenvalues,
+             'mean_expression': mean_expression,
+             'variance_expression': variance_expression,
+             'feature_names': self.data.gene_names,
+             'kwargs': kwargs}
+        return d
+
+    def report_by_type(self, out_directory, **kwargs):
+        """
+        Analagous to full report but will compute for every cell type, useful for basic exploratory analysis
+        Requires an out directory as full reports won't likely fit in RAM
+        """
+        cell_types = list(self.data.celltype2idx.keys())
+
+        for cell_type in cell_types:
+            kwargs['cell_type'] = cell_type
+            report = self.full_report(**kwargs)
+            np.savez(os.path.join(out_directory, f'{cell_type}_report.npz'), **report)
+
+#I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
 if __name__ == "__main__":
-    st = SpatialTranscriptomicsData(root_path='C:\\Users\Thomas\OneDrive\Apps\Documents\GitHub\Triton\TranscriptSpace\data\colon_cancer', name='colon_cancer')
-    st.threshold_G(genetic_covariance_threshold)
+    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
+    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
+    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
+    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
+    print(annotations)
+    st = SpatialTranscriptomicsData(G, P, T,annotations=annotations)
 
-    gene_feature = GeneExpressionFeature(st)
-    neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
-    modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0], cell_type='Treg')
-    modular_transcript_space.fit(l1_ratio=0.5, n_resamples=1, stability_threshold=0.5, out_path='coefficients')
+    cancer_gene_sets = json.loads(open('c4.json').read())
+    gene_set_names = list(cancer_gene_sets.keys())
+
+    gene_sets = []
+    for gene_set in gene_set_names:
+        gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+    
+    #st.remap_metagenes(gene_sets)
+    #print("DONE")
+    
+    statistics = SpatialStastics(st)
+    statistics.report_by_type('sample_statistics', threshold_dist=0.1, distances=np.linspace(0, 0.5, 2))
+
+
+#Vignettes to use later
+"""
+st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+cancer_gene_sets = json.loads(open('c4.json').read())
+gene_set_names = list(cancer_gene_sets.keys())
+
+gene_sets = []
+for gene_set in gene_set_names:
+    gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+print(gene_sets)
+st.remap_metagenes(gene_sets)
+print("DONE")
+"""
+
+"""
+    st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+    cancer_gene_sets = json.loads(open('c4.json').read())
+    gene_set_names = list(cancer_gene_sets.keys())
+
+    gene_sets = []
+    for gene_set in gene_set_names:
+        gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+    print(gene_sets)
+    st.remap_metagenes(gene_sets)
+    print("DONE")
+    statistics = SpatialStastics(st)
+
+    report = statistics.full_report(cell_type='Treg', distance_threshold=0.1, distances=np.linspace(0, 0.5, 2))
+    np.savez('statistics.npz', **report)
+"""

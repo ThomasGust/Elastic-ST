@@ -174,10 +174,10 @@ class GeneExpressionFeature(ModelFeature):
         exclude_genes = kwargs.get('exclude_genes', [])
 
         genes = [gene for gene in genes if gene not in exclude_genes]
-        gene_indices = [self.gene2idx[gene] for gene in genes]
+        gene_indices = [self.data.gene2idx[gene] for gene in genes]
 
         #Return the gene expression data and the gene names alongside the alpha vector
-        return self.G[:, gene_indices], {idx: gene for idx, gene in enumerate(genes)}, [self.alpha] * len(genes)
+        return self.data.G[:, gene_indices], {idx: gene for idx, gene in enumerate(genes)}, [None] * len(genes)
 
 class NeighborhoodAbundanceFeature(ModelFeature):
     
@@ -199,7 +199,7 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             self.alpha = alpha
     
             #Get the neighborhood radius
-            radius = kwargs.get('radius', 1.0)
+            radius = kwargs.get('radius', 0.1)
             self.radius = radius
     
             #Get the neighborhood abundances
@@ -212,6 +212,12 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             np.save('neighborhood_abundances.npy', self.neighborhood_abundances)
 
             self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
+
+            #Get desired cell type from kwargs
+            cell_type = kwargs.get('cell_type', None)
+            if cell_type is not None:
+                cell_type_idx = self.celltype2idx[cell_type]
+                self.neighborhood_abundances = self.neighborhood_abundances[np.where(self.T == cell_type_idx)]
         
         def get_feature(self, **kwargs):
             return self.neighborhood_abundances, self.featureidx2celltype, [self.alpha] * self.neighborhood_abundances.shape[1]
@@ -339,27 +345,78 @@ def flatten_list(l):
     return [item for sublist in l for item in sublist]
 class TranscriptSpace:
 
-    def __init__(self, in_features:list[ModelFeature], out_feature:GeneExpressionFeature, alphas=list[float], cell_type='epithelial.cancer.subtype_1'):
+    def __init__(self, st, in_features:list[ModelFeature], alphas:list, lambd:float=1e-3, cell_type='epithelial.cancer.subtype_1'):
         """
         Parameters:
-            in_features (list): List of input features.
-            out_feature (ModelFeature): Output feature.
-            alphas (list): List of regularization parameters for each input feature.
+            in_features (list): List of input features. Other than gene expression, which is handled automatically.
+            alphas (list): Including different alphas in the ElasticNet model is too slow, these alphas are just a constant multiplier for each feature matrix
+            labmd (float): Regularization parameter for the ElasticNet model.
         """
+        self.st = st
+        self.gene_expression = GeneExpressionFeature(self.st, cell_type)
         self.in_features = in_features
-        
-        self.out_feature = out_feature
-        self.out_feature.compute_feature()
-
         self.cell_type = cell_type
 
         #Compute feature for every feature
         for feature in self.in_features:
-            feature.compute_feature()
+            feature.compute_feature(cell_type=cell_type)
     
         self.alphas = alphas
         
     def fit(self, **kwargs):
+        l1_ratio = kwargs.get('l1_ratio', 0.5)
+        n_resamples = kwargs.get('n_resamples', 4)
+        stability_threshold = kwargs.get('stability_threshold', 0.5)
+        
+        #Get the feature dimension of each feature matrix
+        indim = (self.st.G.shape[1]-1)+sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+        outdim = self.st.G.shape[1]
+
+        self.coefficients = np.zeros((indim+1, outdim))
+
+        #Unwrap the in_feature names
+        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
+        out_feature_names = self.st.gene_names
+
+        for gi in tqdm(range(outdim), f"Training Models For Cell Type {self.cell_type}"):
+            #TODO, I guess we don't even need the name dicts here because we are zeroing out the diagonal for self connections
+            if len(self.in_features) != 0:
+                feature_matrices, feature_dicts, _ = zip(*[feature.get_feature(exclude_genes=[self.st.idx2gene[gi]]) for feature in self.in_features])
+            else:
+                feature_matrices, feature_dicts, _ = [], [], []
+            expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
+            expression_feature = np.log1p(expression_feature)
+
+            #With this feature scaling, everything is relative to gene expression
+            for f, feature_matrix in enumerate(feature_matrices):
+                feature_matrix = np.log1p(feature_matrix * np.sqrt(self.alphas[f]))
+
+            #Concat the gene expression feature with the other feature matrices
+            X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
+            fd = {**expression_dict, **{k: v for d in feature_dicts for k, v in d.items()}}
+
+            y = self.st.G[:, gi]
+
+            resample_coefficients = []
+            for r in range(n_resamples):
+                X, y = resample(X, y)
+                model = ElasticNet(alpha=1e-3, l1_ratio=l1_ratio)
+                model.fit(X, y)
+                resample_coefficients.append(model.coef_)
+            
+            #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
+            times_existed = np.sum(np.array(resample_coefficients) != 0, axis=0)
+            mean_coeffs = np.mean(np.array(resample_coefficients), axis=0)
+
+            coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
+            #Insert a 0 for the gene expression self connection
+            self.coefficients[:, gi] = np.insert(coeffs, gi, 0)
+        
+        coefficient_record = {'coefficients': self.coefficients, 'in_feature_names': in_feature_names, 'out_feature_names': out_feature_names}
+        return coefficient_record
+            
+        
+        """
         in_feature_dim = sum([len(list(feature.get_feature()[1].values())) for feature in self.in_features])
         out_feature_dim = self.out_feature.data.G.shape[1]
 
@@ -399,17 +456,10 @@ class TranscriptSpace:
             times_existed = np.sum(np.array(c) != 0, axis=0)
             mean_coeffs = np.mean(np.array(c), axis=0)
 
-            print(mean_coeffs.shape)
             coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
-            print(coeffs.shape)
-            print(self.coefficients.shape)
-                
+            
             self.coefficients[:, i] = coeffs
-
-
-        #self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
-        #self.coefficient_matrix.save(out_path)
-    
+        """
 
 class CoefficientAnalysis:
 
@@ -496,8 +546,6 @@ class CoefficientAnalysis:
         return nx.algorithms.flow.maximum_flow(self.graph)
 
 class SpatialStastics:
-    #TODO:
-    #Spatial eigenvector mapping
     """
     Module for computing spatial statistics on spatial transcriptomics data. We can get stuff like the genexgene covariance matrix and spatial autocorrelation.
     """
@@ -986,6 +1034,21 @@ if __name__ == "__main__":
     P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
     T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
+
+    st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
+    st.filter_genes(st.covariance_threshold, threshold=0.95)
+
+    neighborhood_abundances = NeighborhoodAbundanceFeature(st)
+    ts = TranscriptSpace(st, [neighborhood_abundances], [4.0], cell_type='Treg')
+    ts.fit(radius=0.1)
+
+#Vignettes to use later
+"""
+
+    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
+    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
+    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
+    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
     print(annotations)
     st = SpatialTranscriptomicsData(G, P, T,annotations=annotations)
 
@@ -997,10 +1060,7 @@ if __name__ == "__main__":
         gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
     
     statistics = SpatialStastics(st)
-    statistics.report_by_type('sample_statistics', threshold_dist=0.1, distances=np.linspace(0, 0.5, 2))
-
-
-#Vignettes to use later
+    statistics.report_by_type('sample_statistics', threshold_dist=0.1, distances=np.linspace(0, 0.5, 2))"""
 """
 st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
 cancer_gene_sets = json.loads(open('c4.json').read())

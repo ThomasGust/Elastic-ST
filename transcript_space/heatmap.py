@@ -10,7 +10,11 @@ import json
 
 if __name__ == "__main__":
     #st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
-    st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
+    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
+    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
+    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
+    st = SpatialTranscriptomicsData(G, P, T, annotations)
     cancer_gene_sets = json.loads(open('c4.json').read())
     gene_set_names = list(cancer_gene_sets.keys())
 

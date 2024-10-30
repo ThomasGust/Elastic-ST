@@ -414,52 +414,6 @@ class TranscriptSpace:
         
         coefficient_record = {'coefficients': self.coefficients, 'in_feature_names': in_feature_names, 'out_feature_names': out_feature_names}
         return coefficient_record
-            
-        
-        """
-        in_feature_dim = sum([len(list(feature.get_feature()[1].values())) for feature in self.in_features])
-        out_feature_dim = self.out_feature.data.G.shape[1]
-
-        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
-        out_feature_names = self.out_feature.data.gene_names
-
-        self.coefficients = np.zeros((in_feature_dim, out_feature_dim))
-        print(self.coefficients.shape)
-
-        #Get l1 ratio, n_resamples, and stability threshold from kwargs
-        l1_ratio = kwargs.get('l1_ratio', 0.5)
-        n_resamples = kwargs.get('n_resamples', 4)
-        stability_threshold = kwargs.get('stability_threshold', 0.5)
-
-        out_path = kwargs.get('out_path', 'coefficients')
-
-        for i in tqdm(range(out_feature_dim)):
-            feature_attributes = []
-            for feature in self.in_features:
-                epoch_feature_matrix, epoch_idx2feature, epoch_feature_alpha = feature.get_feature(exclude_genes=[self.out_feature.data.idx2gene[i]], alpha=self.alphas[self.in_features.index(feature)])
-                feature_dict = {'matrix': epoch_feature_matrix, 'idx2feature': epoch_idx2feature, 'alpha': epoch_feature_alpha}
-                feature_attributes.append(feature_dict)
-            
-            y = self.out_feature.G[:, i]
-            X = np.concatenate([feature['matrix'] * np.sqrt(1/np.array((feature['alpha']))) for feature in feature_attributes], axis=1)
-
-
-            c = []
-            for r in range(n_resamples):
-                X, y = resample(X, y)
-                model = ElasticNet(alpha=1e-3, l1_ratio=l1_ratio)
-                model.fit(X, y)
-                
-                sample_coeffs = model.coef_
-            
-            #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
-            times_existed = np.sum(np.array(c) != 0, axis=0)
-            mean_coeffs = np.mean(np.array(c), axis=0)
-
-            coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
-            
-            self.coefficients[:, i] = coeffs
-        """
 
 class CoefficientAnalysis:
 
@@ -501,6 +455,9 @@ class CoefficientAnalysis:
         return f"Graph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges"
 
     def get_graph_communities(self):
+        """
+        An alias for the nx.algorithms.community.greedy_modularity_communities function. Works on the internal coefficient graph
+        """
         return nx.algorithms.community.greedy_modularity_communities(self.graph)
     
     def get_graph_cliques(self):
@@ -1039,7 +996,9 @@ if __name__ == "__main__":
     st.filter_genes(st.covariance_threshold, threshold=0.95)
 
     neighborhood_abundances = NeighborhoodAbundanceFeature(st)
-    ts = TranscriptSpace(st, [neighborhood_abundances], [4.0], cell_type='Treg')
+    print(st.celltype2idx.keys())
+    #ts = TranscriptSpace(st, [neighborhood_abundances], [4.0], cell_type='Treg')
+    ts = TranscriptSpace(st, [], [], cell_type='T CD8 memory')
     ts.fit(radius=0.1)
 
 #Vignettes to use later

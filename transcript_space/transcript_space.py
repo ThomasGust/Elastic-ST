@@ -15,6 +15,8 @@ from sklearn.linear_model import Lasso
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 from sklearn.linear_model import ElasticNet
+from scipy.sparse import lil_matrix
+from scipy.spatial import cKDTree
 
 class SpatialTranscriptomicsData:
     """
@@ -38,7 +40,7 @@ class SpatialTranscriptomicsData:
         self.annotation_path = os.path.join(root_path, f"{name}_annotation.json")
 
         #Load all of the core data primtives representing the data
-        self.G = np.load(self.G_path)[:, ::10]
+        self.G = np.load(self.G_path)
         self.P = np.load(self.P_path)
         self.T = np.load(self.T_path)
 
@@ -46,7 +48,7 @@ class SpatialTranscriptomicsData:
         #Load annotations for cell types and gene names, needed for interpretability
         self.annotations = json.load(open(self.annotation_path))
         self.cell_types = self.annotations['cell_types']
-        self.gene_names = self.annotations['gene_names'][::10]
+        self.gene_names = self.annotations['gene_names']
 
         self.map_dicts()
     
@@ -943,6 +945,8 @@ class SpatialStastics:
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
+        print(expression.shape)
+        print(position.shape)
         
         distances = squareform(pdist(position)) #Get pariwise euclidean distances between cells
 
@@ -959,36 +963,37 @@ class SpatialStastics:
 
         #Scale by the number of cells and the sum of weights
         n_cells = expression.shape[0]
-        sum_weights = np.sum(W, axis=0)
+        sum_weights = np.sum(W)
 
         morans_I = (n_cells / sum_weights) * (numerator / denominator)
 
         return morans_I
 
     def compute_geary_C(self, **kwargs):
-        #Get threshold distance
+        """Bad implementation, currently is not vectorized for memory purposes"""
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
-
-        distances = squareform(pdist(position))
-
-        #Spatial weights matrix
-
-        W = (distances < threshold_dist).astype(float)
-        np.fill_diagonal(W, 0)
-
-        W_sum = np.sum(W, axis=0)
-
-        expression_centered = expression - np.mean(expression, axis=0)
-
-        differences_squared = (expression_centered[:, np.newaxis, :] - expression_centered[np.newaxis, :, :]) ** 2
-        weighted_diffs = W[:, :, np.newaxis] * differences_squared
-
-        numerator = np.sum(weighted_diffs, axis=(0, 1))
-        denominator = np.sum(expression_centered**2, axis=0)*2
-
         N = expression.shape[0]
+
+        # Center the expression values
+        expression_centered = expression - np.mean(expression, axis=0)
+        denominator = np.sum(expression_centered**2, axis=0) * 2
+
+        tree = cKDTree(position)
+
+        numerator = np.zeros(expression.shape[1], dtype=np.float64)
+        W_sum = 0
+
+        for i in tqdm(range(N)):
+            neighbors = tree.query_ball_point(position[i], threshold_dist)
+
+            for j in neighbors:
+                if i != j:
+                    W_sum += 1
+                    diff_squared = (expression_centered[i] - expression_centered[j]) ** 2
+                    numerator += diff_squared
+
         gearys_C = ((N - 1) / W_sum) * (numerator / denominator)
 
         return gearys_C
@@ -1013,27 +1018,29 @@ class SpatialStastics:
 
         #Now we need the denominator for all cells and genes
         W_squared_sum = np.sum(W ** 2, axis=1)
-        denominator = expression_std * np.sqrt((N * W_squared_sum - W_sum ** 2) / (N - 1))[:, np.newaxis]
+        denominator = (expression_std * np.sqrt((N * W_squared_sum - W_sum ** 2) / (N - 1))[:, np.newaxis])+1e-6
 
         Gi_values = numerator/denominator
         
         return Gi_values
     
     def compute_ripleys_K(self, **kwargs):
-        #Get distances to evaluate
         distances = kwargs.get('distances', np.linspace(0, 1, 100))
         area = kwargs.get('area', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
-        distances = squareform(pdist(position))
-
         N = expression.shape[0]
 
-        indicators = (distances[:, :, np.newaxis] <= distances).astype(float)
-        weights = np.ones_like(indicators)
-        weighted_sums = np.sum(indicators * weights, axis=(0, 1))
+        tree = cKDTree(position)
 
-        Kv = (area / (N**2)) * weighted_sums
+        Kv = np.zeros_like(distances, dtype=np.float64)
+
+        for idx, d in enumerate(distances):
+            count_within_d = 0
+            for i in range(N):
+                neighbors = tree.query_ball_point(position[i], d)
+                count_within_d += len(neighbors) - 1  # Exclude self
+            Kv[idx] = (area / (N**2)) * count_within_d
 
         return Kv
 
@@ -1119,21 +1126,26 @@ class SpatialStastics:
     def compute_mark_correlation_function(self, **kwargs):
         distances_to_evaluate = kwargs.get('distances', np.linspace(0, 1, 100))
         expression, position = self.get_expression_position_(kwargs)
-
-        distances = squareform(pdist(position))
         N = position.shape[0]
+        mark_corr_values = np.zeros((len(distances_to_evaluate), expression.shape[1]), dtype=np.float64)
 
-        mark_corr_values = np.zeros((len(distances_to_evaluate), expression.shape[1]))
-        mark_products = np.einsum('ij,ik->ijk', expression, expression)
+        tree = cKDTree(position)
 
-        indicators = distances[: , :, np.newaxis] <= distances_to_evaluate
+        for idx, d in enumerate(distances_to_evaluate):
+            weighted_mark_sum = np.zeros(expression.shape[1], dtype=np.float64)
+            valid_pairs = 0
 
-        weighted_mark_sum = np.einsum('ijk,ij->ik', indicators, mark_products)
+            for i in tqdm(range(N)):
+                neighbors = tree.query_ball_point(position[i], d)
+                for j in neighbors:
+                    if i != j:
+                        valid_pairs += 1
+                        weighted_mark_sum += expression[i] * expression[j]
 
-        valid_pairs = np.sum(indicators, axis=(0, 1))
-
-        valid_pairs[valid_pairs == 0] = 1
-        mark_corr_values = weighted_mark_sum / valid_pairs[:, np.newaxis]
+            if valid_pairs > 0:
+                mark_corr_values[idx] = weighted_mark_sum / valid_pairs
+            else:
+                mark_corr_values[idx] = 0
 
         return mark_corr_values
     
@@ -1146,7 +1158,7 @@ class SpatialStastics:
         W = (distances < threshold_distance).astype(float)
         np.fill_diagonal(W, 0)
 
-        W_sum = np.sum(W, axis=0)
+        W_sum = np.sum(W)
 
         expression_centered = expression - np.mean(expression, axis=0)
 
@@ -1182,6 +1194,49 @@ class SpatialStastics:
         eigenvectors = eigenvectors[:, sorted_indices]
 
         return eigenvectors, eigenvalues
+    
+    def full_report(self, **kwargs):
+        #Compute all statistics
+        gene_covariance = self.compute_gene_covariance_matrix(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GENE COVARIANCE')
+        morans_I = self.compute_moran_I(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MORANS I')
+        gearys_C = self.compute_geary_C(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GEARYS C')
+        getis_ord_Gi = self.compute_getis_ord_Gi(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED GETIS ORD GI')
+        ripley_K = self.compute_ripleys_K(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED RIPLEYS K')
+        lisa = self.compute_lisa(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED LISA')
+        dispersion_index = self.compute_disperion_index(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED DISPERSION INDEX')
+        spatial_cross_correlation = self.compute_spatial_cross_correlation(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL CROSS CORRELATION')
+        spatial_co_occurence = self.compute_spatial_co_occurence(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL CO OCCURENCE')
+        mark_correlation_function = self.compute_mark_correlation_function(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MARK CORRELATION FUNCTION')
+        bivariate_morans_I = self.bivariate_morans_I(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED BIVARIATE MORANS I')
+        spatial_eigenvectors, spatial_eigenvalues = self.spatial_eigenvector_mapping(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED SPATIAL EIGENVECTORS + EIGENVALUES')
+
+        d = {'gene_covariance': gene_covariance,
+             'morans_I': morans_I,
+             'gearys_C': gearys_C,
+             'getis_ord_Gi': getis_ord_Gi,
+             'ripley_K': ripley_K,
+             'lisa': lisa,
+             'dispersion_index': dispersion_index,
+             'spatial_cross_correlation': spatial_cross_correlation,
+             'spatial_co_occurence': spatial_co_occurence,
+             'mark_correlation_function': mark_correlation_function,
+             'bivariate_morans_I': bivariate_morans_I,
+             'spatial_eigenvectors': spatial_eigenvectors,
+             'spatial_eigenvalues': spatial_eigenvalues}
+        return d
+    
 
 def genetic_covariance_threshold(G):
     percentile_threshold = 0.75
@@ -1189,11 +1244,11 @@ def genetic_covariance_threshold(G):
     cov_threshold = np.percentile(cov, percentile_threshold)
     return cov_threshold
 
-if __name__ == "__main__":
-    st = SpatialTranscriptomicsData(root_path='C:\\Users\Thomas\OneDrive\Apps\Documents\GitHub\Triton\TranscriptSpace\data\colon_cancer', name='colon_cancer')
-    st.threshold_G(genetic_covariance_threshold)
+#I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
-    gene_feature = GeneExpressionFeature(st)
-    neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
-    modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0], cell_type='Treg')
-    modular_transcript_space.fit(l1_ratio=0.5, n_resamples=1, stability_threshold=0.5, out_path='coefficients')
+if __name__ == "__main__":
+    st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+    statistics = SpatialStastics(st)
+
+    report = statistics.full_report(cell_type='Treg', distance_threshold=0.1, distances=np.linspace(0, 0.5, 2))
+    np.savez('statistics.npz', **report)

@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import ElasticNet
 from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
+import json
 
 class SpatialTranscriptomicsData:
     """
@@ -96,9 +97,13 @@ class SpatialTranscriptomicsData:
         normalized_G = self.G / np.sum(self.G, axis=1)[:, np.newaxis]
         if len(list(metagenes[0])) == 2:
             #No weights
-            for metagene in metagenes:
+            for metagene in tqdm(metagenes):
                 metagene_name, gene_names = metagene
-                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                gene_indices = []
+                for gene in gene_names:
+                    if gene in self.gene2idx:
+                        gene_indices.append(self.gene2idx[gene])
                 new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices], axis=1)
                 metagene_names.append(metagene_name)
 
@@ -106,12 +111,17 @@ class SpatialTranscriptomicsData:
             #Weights
             for metagene in metagenes:
                 metagene_name, gene_names, weights = metagene
-                gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
+                gene_indices = []
+                for gene in gene_names:
+                    if gene in self.gene2idx:
+                        gene_indices.append(self.gene2idx[gene])
                 new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices] * weights, axis=1)
                 metagene_names.append(metagene_name)
         
         self.G = new_G
         self.gene_names = metagene_names
+        self.map_dicts()
 
 class FeatureSetData:
     """
@@ -959,7 +969,7 @@ class SpatialStastics:
         WG = W @ expression_centered
 
         numerator = np.sum(expression_centered * WG, axis=0)
-        denominator = np.sum(expression_centered ** 2, axis=0)
+        denominator = np.sum(expression_centered ** 2, axis=0)+1e-6
 
         #Scale by the number of cells and the sum of weights
         n_cells = expression.shape[0]
@@ -978,7 +988,7 @@ class SpatialStastics:
 
         # Center the expression values
         expression_centered = expression - np.mean(expression, axis=0)
-        denominator = np.sum(expression_centered**2, axis=0) * 2
+        denominator = (np.sum(expression_centered**2, axis=0) * 2)+1e-6
 
         tree = cKDTree(position)
 
@@ -1055,7 +1065,7 @@ class SpatialStastics:
 
         N = expression.shape[0]
         X_mean = np.mean(expression, axis=0)
-        X_var = np.var(expression, axis=0, ddof=1)
+        X_var = np.var(expression, axis=0, ddof=1)+1e-6
 
         X_centered = expression - X_mean
 
@@ -1070,7 +1080,7 @@ class SpatialStastics:
 
         expression, _ = self.get_expression_position_(kwargs)
 
-        expression_mean = np.mean(expression, axis=0)
+        expression_mean = np.mean(expression, axis=0)+1e-6
         expression_var = np.var(expression, axis=0, ddof=1)
 
         dispersion_index = expression_var / expression_mean
@@ -1093,7 +1103,7 @@ class SpatialStastics:
         numerator = spatial_lag.T @ spatial_lag
 
         norm = np.linalg.norm(expression_centered, axis=0)
-        denominator = np.outer(norm, norm)
+        denominator = np.outer(norm, norm)+1e-6
 
         cross_corr_matrix = numerator/denominator
 
@@ -1158,7 +1168,7 @@ class SpatialStastics:
         W = (distances < threshold_distance).astype(float)
         np.fill_diagonal(W, 0)
 
-        W_sum = np.sum(W)
+        W_sum = np.sum(W)+1e-6
 
         expression_centered = expression - np.mean(expression, axis=0)
 
@@ -1169,7 +1179,7 @@ class SpatialStastics:
         norm_X = np.sqrt(np.sum(expression_centered ** 2, axis=0))
         norm_Y = np.sqrt(np.sum(spatial_lag ** 2, axis=0))
 
-        denominator = np.outer(norm_X, norm_Y)
+        denominator = np.outer(norm_X, norm_Y)+1e-6
         bivariate_morans_I = (expression.shape[0] / W_sum) * (numerator / denominator)
 
         return bivariate_morans_I
@@ -1247,8 +1257,33 @@ def genetic_covariance_threshold(G):
 #I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
 if __name__ == "__main__":
+
+    
     st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+    cancer_gene_sets = json.loads(open('c4.json').read())
+    gene_set_names = list(cancer_gene_sets.keys())
+
+    gene_sets = []
+    for gene_set in gene_set_names:
+        gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+    print(gene_sets)
+    st.remap_metagenes(gene_sets)
+    print("DONE")
     statistics = SpatialStastics(st)
 
     report = statistics.full_report(cell_type='Treg', distance_threshold=0.1, distances=np.linspace(0, 0.5, 2))
     np.savez('statistics.npz', **report)
+
+#Vignettes to use later
+"""
+st = SpatialTranscriptomicsData("data\\colon_cancer", "colon_cancer")
+cancer_gene_sets = json.loads(open('c4.json').read())
+gene_set_names = list(cancer_gene_sets.keys())
+
+gene_sets = []
+for gene_set in gene_set_names:
+    gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+print(gene_sets)
+st.remap_metagenes(gene_sets)
+print("DONE")
+"""

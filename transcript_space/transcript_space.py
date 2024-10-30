@@ -48,6 +48,12 @@ class SpatialTranscriptomicsData:
 
         self.map_dicts()
     
+    def threshold_G(self, by:callable):
+        """
+        Apply a thresholding function to the expression matrix G.
+        """
+        self.G = by(self.G)
+    
     def map_dicts(self):
         self.celltype2idx = {cell_type: idx for idx, cell_type in enumerate(self.cell_types)}
         self.idx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.cell_types)}
@@ -1124,9 +1130,16 @@ class SpatialStastics:
 
         return eigenvectors, eigenvalues
 
+def genetic_covariance_threshold(G):
+    percentile_threshold = 0.75
+    cov = np.cov(G)
+    cov_threshold = np.percentile(cov, percentile_threshold)
+    return cov_threshold
+
 if __name__ == "__main__":
     st = SpatialTranscriptomicsData(root_path='C:\\Users\Thomas\OneDrive\Apps\Documents\GitHub\Triton\TranscriptSpace\data\colon_cancer', name='colon_cancer')
-    
+    st.threshold_G(genetic_covariance_threshold)
+
     gene_feature = GeneExpressionFeature(st)
     neighborhood_abundance_feature = NeighborhoodAbundanceFeature(st)
     modular_transcript_space = ModularTranscriptSpace([gene_feature, neighborhood_abundance_feature], gene_feature, alphas=[1.0, 2.0], cell_type='Treg')

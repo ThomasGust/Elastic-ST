@@ -31,23 +31,14 @@ class SpatialTranscriptomicsData:
     - gene_names: a list of gene names
     """
 
-    def __init__(self, root_path:str, name:str):
-        self.root_path = root_path
-        self.name = name
-
-        self.G_path = os.path.join(root_path, f"{name}_G.npy")
-        self.P_path = os.path.join(root_path, f"{name}_P.npy")
-        self.T_path = os.path.join(root_path, f"{name}_T.npy")
-        self.annotation_path = os.path.join(root_path, f"{name}_annotation.json")
-
-        #Load all of the core data primtives representing the data
-        self.G = np.load(self.G_path)
-        self.P = np.load(self.P_path)
-        self.T = np.load(self.T_path)
+    def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
+        self.G = G
+        self.P = P
+        self.T = T
 
 
         #Load annotations for cell types and gene names, needed for interpretability
-        self.annotations = json.load(open(self.annotation_path))
+        self.annotations = annotations
         self.cell_types = self.annotations['cell_types']
         self.gene_names = self.annotations['gene_names']
 
@@ -832,6 +823,14 @@ class SpatialStastics:
         eigenvectors = eigenvectors[:, sorted_indices]
 
         return eigenvectors, eigenvalues
+
+    def get_mean_expression(self, **kwargs):
+        expression, _ = self.get_expression_position_(kwargs)
+        return np.mean(expression, axis=0)
+    
+    def get_variance_expression(self, **kwargs):
+        expression, _ = self.get_expression_position_(kwargs)
+        return np.var(expression, axis=0, ddof=1)
     
     def full_report(self, **kwargs):
         #Compute all statistics
@@ -859,6 +858,10 @@ class SpatialStastics:
         print('SPATIAL STATISTICS COMPUTED BIVARIATE MORANS I')
         spatial_eigenvectors, spatial_eigenvalues = self.spatial_eigenvector_mapping(**kwargs)
         print('SPATIAL STATISTICS COMPUTED SPATIAL EIGENVECTORS + EIGENVALUES')
+        mean_expression= self.get_mean_expression(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED MEAN EXPRESSION')
+        variance_expression = self.get_variance_expression(**kwargs)
+        print('SPATIAL STATISTICS COMPUTED VARIANCE EXPRESSION')
 
         d = {'gene_covariance': gene_covariance,
              'morans_I': morans_I,
@@ -872,21 +875,47 @@ class SpatialStastics:
              'mark_correlation_function': mark_correlation_function,
              'bivariate_morans_I': bivariate_morans_I,
              'spatial_eigenvectors': spatial_eigenvectors,
-             'spatial_eigenvalues': spatial_eigenvalues}
+             'spatial_eigenvalues': spatial_eigenvalues,
+             'mean_expression': mean_expression,
+             'variance_expression': variance_expression,
+             'feature_names': self.data.gene_names,
+             'kwargs': kwargs}
         return d
-    
 
-def genetic_covariance_threshold(G):
-    percentile_threshold = 0.75
-    cov = np.cov(G)
-    cov_threshold = np.percentile(cov, percentile_threshold)
-    return cov_threshold
+    def report_by_type(self, out_directory, **kwargs):
+        """
+        Analagous to full report but will compute for every cell type, useful for basic exploratory analysis
+        Requires an out directory as full reports won't likely fit in RAM
+        """
+        cell_types = list(self.data.celltype2idx.keys())
+
+        for cell_type in cell_types:
+            kwargs['cell_type'] = cell_type
+            report = self.full_report(**kwargs)
+            np.savez(os.path.join(out_directory, f'{cell_type}_report.npz'), **report)
 
 #I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
 if __name__ == "__main__":
-    pass
+    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
+    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
+    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
+    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
+    print(annotations)
+    st = SpatialTranscriptomicsData(G, P, T,annotations=annotations)
 
+    cancer_gene_sets = json.loads(open('c4.json').read())
+    gene_set_names = list(cancer_gene_sets.keys())
+
+    gene_sets = []
+    for gene_set in gene_set_names:
+        gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
+    
+    #st.remap_metagenes(gene_sets)
+    #print("DONE")
+    
+    statistics = SpatialStastics(st)
+    statistics.report_by_type('sample_statistics', threshold_dist=0.1, distances=np.linspace(0, 0.5, 2))
 
 
 #Vignettes to use later

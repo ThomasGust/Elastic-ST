@@ -389,7 +389,7 @@ class TranscriptSpace:
 
             #With this feature scaling, everything is relative to gene expression
             for f, feature_matrix in enumerate(feature_matrices):
-                feature_matrix = np.log1p(feature_matrix * np.sqrt(self.alphas[f]))
+                feature_matrix = np.log1p(feature_matrix * self.alphas[f])
 
             #Concat the gene expression feature with the other feature matrices
             X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
@@ -420,7 +420,7 @@ class CoefficientAnalysis:
     def __init__(self, coefficient_matrix, graph_threshold):
         self.coefficient_matrix = coefficient_matrix
 
-        self.zero_diagonal()
+        #self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
 
 
@@ -432,6 +432,7 @@ class CoefficientAnalysis:
         # Fill the new matrix with the original data
         new_matrix[~np.eye(m, dtype=bool)] = self.coefficient_matrix.coefficients.ravel()
         self.coefficient_matrix.coefficients = new_matrix
+
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
@@ -456,51 +457,140 @@ class CoefficientAnalysis:
 
     def get_graph_communities(self):
         """
-        An alias for the nx.algorithms.community.greedy_modularity_communities function. Works on the internal coefficient graph
+        An alias for the nx.algorithms.community.greedy_modularity_communities function. Works on the internal coefficient graph to find communities.
+
+        Returns:
+            list: List of sets of nodes in each community.
         """
-        return nx.algorithms.community.greedy_modularity_communities(self.graph)
+        return list(nx.algorithms.community.greedy_modularity_communities(self.graph))
     
     def get_graph_cliques(self):
-        return nx.algorithms.clique.find_cliques(self.graph)
+        """
+        An alias for the nx.algorithms.clique.find_cliques function. Works on the internal coefficient graph to find cliques.
+
+        Returns:
+            list: List of cliques in the graph.
+        """
+        return list(nx.algorithms.clique.find_cliques(self.graph))
     
     def get_graph_max_clique(self):
-        return nx.algorithms.clique.graph_clique_number(self.graph)
+        """
+        An alias for the nx.algorithms.clique.graph_clique_number function. Works on the internal coefficient graph to find the maximum clique.
+
+        Returns:
+            int: The size of the maximum clique in the graph.
+        """
+        return int(nx.algorithms.clique.graph_clique_number(self.graph))
     
     def get_graph_components(self):
-        return nx.algorithms.components.connected_components(self.graph)
+        """
+        An alias for the nx.algorithms.components.connected_components function. Works on the internal coefficient graph to find connected components.
+        
+        Returns:
+            list: List of sets of nodes in each connected component.
+        """
+        return list(nx.algorithms.components.connected_components(self.graph))
     
     def get_graph_diameter(self):
-        return nx.algorithms.distance_measures.diameter(self.graph)
+        """
+        An alias for the nx.algorithms.distance_measures.diameter function. Works on the internal coefficient graph to find the diameter.
+
+        Returns:
+            int: The diameter of the graph.
+        """
+        return int(nx.algorithms.distance_measures.diameter(self.graph))
     
     def get_graph_degree_centrality(self):
-        return nx.algorithms.centrality.degree_centrality(self.graph)
+        """
+        An alias for nx.algorithms.centrality.degree_centrality function. Works on the internal coefficient graph to find the degree centrality of each node.
+
+        Returns:
+            dict: A dictionary with nodes as keys and degree centrality as values.
+        """
+        return dict(nx.algorithms.centrality.degree_centrality(self.graph))
     
     def get_graph_closeness_centrality(self):
-        return nx.algorithms.centrality.closeness_centrality(self.graph)
+        """
+        An alias for nx.algorithms.centrality.closeness_centrality function. Works on the internal coefficient graph to find the closeness centrality of each node.
+
+        Returns:
+            dict: A dictionary with nodes as keys and closeness centrality as values.
+        """
+        return dict(nx.algorithms.centrality.closeness_centrality(self.graph))
     
     def get_graph_betweenness_centrality(self):
-        return nx.algorithms.centrality.betweenness_centrality(self.graph)
+        """
+        An alias for nx.algorithms.centrality.betweenness_centrality function. Works on the internal coefficient graph to find the betweenness centrality of each node.
+
+        Returns:
+            dict: A dictionary with nodes as keys and betweenness centrality as values.
+        """
+        return dict(nx.algorithms.centrality.betweenness_centrality(self.graph))
     
     def get_graph_eigenvector_centrality(self):
-        return nx.algorithms.centrality.eigenvector_centrality(self.graph)
+        """
+        An alias for nx.algorithms.centrality.eigenvector_centrality function. Works on the internal coefficient graph to find the eigenvector centrality of each node.
+
+        Returns:
+            dict: A dictionary with nodes as keys and eigenvector centrality as values.
+        """
+        return dict(nx.algorithms.centrality.eigenvector_centrality(self.graph))
     
     def get_graph_clustering_coefficient(self):
-        return nx.algorithms.cluster.clustering(self.graph)
+        """
+        An alias for nx.algorithms.cluster.clustering function. Works on the internal coefficient graph to find the clustering coefficient of each node.
+
+        Returns:
+            dict: A dictionary with nodes as keys and clustering coefficient as values.
+        """
+        
+        return dict(nx.algorithms.cluster.clustering(self.graph))
     
     def get_graph_transitivity(self):
-        return nx.algorithms.cluster.transitivity(self.graph)
+        """
+        An alias for nx.algorithms.cluster.transitivity function. Works on the internal coefficient graph to find the transitivity of the graph.
+
+        Returns:
+            float: The transitivity of the graph.
+        """
+        return float(nx.algorithms.cluster.transitivity(self.graph))
     
     def get_graph_average_shortest_path_length(self):
-        return nx.algorithms.shortest_paths.generic.average_shortest_path_length(self.graph)
+        """
+        An alias for nx.algorithms.shortest_paths.generic.average_shortest_path_length function. Works on the internal coefficient graph to find the average shortest path length.
+
+        Returns:
+            float: The average shortest path length of the graph.
+
+        """
+        return float(nx.algorithms.shortest_paths.generic.average_shortest_path_length(self.graph))
     
     def get_graph_dominating_set(self):
-        return nx.algorithms.approximation.dominating_set.min_weighted_dominating_set(self.graph)
+        """
+        An alias for nx.algorithms.approximation.dominating_set.min_weighted_dominating_set function. Works on the internal coefficient graph to find the minimum weighted dominating set.
+
+        Returns:
+            dict: A dictionary with nodes as keys and dominating set as values.
+        """
+        return dict(nx.algorithms.approximation.dominating_set.min_weighted_dominating_set(self.graph))
     
     def get_graph_max_matching(self):
-        return nx.algorithms.matching.max_weight_matching(self.graph)
+        """
+        An alias for nx.algorithms.matching.max_weight_matching function. Works on the internal coefficient graph to find the maximum weight matching.
+        
+        Returns:
+            dict: A dictionary with nodes as keys and maximum weight matching as values
+        """
+        return dict(nx.algorithms.matching.max_weight_matching(self.graph))
     
     def get_graph_max_flow(self):
-        return nx.algorithms.flow.maximum_flow(self.graph)
+        """
+        An alias for nx.algorithms.flow.maximum_flow function. Works on the internal coefficient graph to find the maximum flow.
+        
+        Returns:
+            dict: A dictionary with nodes as keys and maximum flow as values
+        """
+        return dict(nx.algorithms.flow.maximum_flow(self.graph))
 
 class SpatialStastics:
     """

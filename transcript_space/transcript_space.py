@@ -333,51 +333,11 @@ class NeighborhoodMetageneFeature(ModelFeature):
             radius (float): Neighborhood radius.
         """
         return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
-            
-def flatten_list(l:list):
-    """
-    Parameters:
-        l (list): List of lists.
-    """
+
+
+def flatten_list(l):
     return [item for sublist in l for item in sublist]
-
-class CoefficientFeatureMatrix:
-    """
-    Object to hold a coefficient matrix alonside the input and output feature names
-    
-    """
-    def __init__(self, coefficients:Union[np.array, None], in_features:Union[np.array, None], out_features:Union[np.array, None]):
-        """
-        Parameters:
-            coefficients (numpy.ndarray): Coefficient matrix of shape (in_features, out_features).
-            in_features (numpy.ndarray): Names of input features.
-            out_features (numpy.ndarray): Names of output features.
-        """
-        
-        self.coefficients = coefficients
-        self.in_features = in_features
-        self.out_features = out_features
-
-    def save(self, root_path:str):
-        """
-        Parameters:
-            root_path (str): Path to the directory where the coefficient matrix should be saved.
-        """
-        np.save(os.path.join(root_path, 'coefficients.npy'), self.coefficients)
-        np.save(os.path.join(root_path, 'in_features.npy'), self.in_features)
-        np.save(os.path.join(root_path, 'out_features.npy'), self.out_features)
-    
-    def load(self, root_path:str):
-        """
-        Parameters:
-            root_path (str): Path to the directory containing the coefficient matrix.
-        """
-        self.coefficients = np.load(os.path.join(root_path, 'coefficients.npy'))
-        self.in_features = np.load(os.path.join(root_path, 'in_features.npy'))
-        self.out_features = np.load(os.path.join(root_path, 'out_features.npy'))
-
-
-class ModularTranscriptSpace:
+class TranscriptSpace:
 
     def __init__(self, in_features:list[ModelFeature], out_feature:GeneExpressionFeature, alphas=list[float], cell_type='epithelial.cancer.subtype_1'):
         """
@@ -400,10 +360,6 @@ class ModularTranscriptSpace:
         self.alphas = alphas
         
     def fit(self, **kwargs):
-        #For each gene train a new MASSENLasso and add the coefficient slice to the coefficient matrix
-        #Coefficient matrix of shape (in_features, out_features)
-
-        #in_feature_dim = sum([feature.G.shape[1] for feature in self.in_features])
         in_feature_dim = sum([len(list(feature.get_feature()[1].values())) for feature in self.in_features])
         out_feature_dim = self.out_feature.data.G.shape[1]
 
@@ -451,13 +407,13 @@ class ModularTranscriptSpace:
             self.coefficients[:, i] = coeffs
 
 
-        self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
-        self.coefficient_matrix.save(out_path)
+        #self.coefficient_matrix = CoefficientFeatureMatrix(self.coefficients, in_feature_names, out_feature_names)
+        #self.coefficient_matrix.save(out_path)
     
 
 class CoefficientAnalysis:
 
-    def __init__(self, coefficient_matrix:CoefficientFeatureMatrix, graph_threshold):
+    def __init__(self, coefficient_matrix, graph_threshold):
         self.coefficient_matrix = coefficient_matrix
 
         self.zero_diagonal()
@@ -910,9 +866,6 @@ if __name__ == "__main__":
     gene_sets = []
     for gene_set in gene_set_names:
         gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
-    
-    #st.remap_metagenes(gene_sets)
-    #print("DONE")
     
     statistics = SpatialStastics(st)
     statistics.report_by_type('sample_statistics', threshold_dist=0.1, distances=np.linspace(0, 0.5, 2))

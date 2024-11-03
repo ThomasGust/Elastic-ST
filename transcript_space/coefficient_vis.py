@@ -47,5 +47,5 @@ if __name__ == "__main__":
     sns.heatmap(adjacency_comparison, cmap='viridis', center=0)
     plt.yticks(ticks=np.arange(len(full_in_feature_names)), labels=full_in_feature_names)
     plt.xticks(ticks=np.arange(len(full_out_feature_names)), labels=full_out_feature_names, rotation=90)
-    plt.title("Adjacency Comparison With and Without Spatial Features")
+    plt.title("Adjacency Comparison With and Without Spatial Features", fontsize=16)
     plt.show()

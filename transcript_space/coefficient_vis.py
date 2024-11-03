@@ -7,6 +7,20 @@ import matplotlib.pyplot as plt
 #indices = np.argsort(morans_i)[::-1][:200]
 
 if __name__ == "__main__":
+    coefficients = np.load('treg.npz')
+    coeffs = coefficients['coefficients']
+    in_feature_names = coefficients['in_feature_names']
+    out_feature_names = coefficients['out_feature_names']
+    print(coeffs.shape)
+
+    sns.heatmap(coeffs, cmap='viridis', center=0)
+    plt.yticks(ticks=np.arange(len(in_feature_names)), labels=in_feature_names)
+    plt.xticks(ticks=np.arange(len(out_feature_names)), labels=out_feature_names, rotation=90)
+    plt.title("Treg Coefficients", fontsize=16)
+    plt.show()
+
+    
+"""
     coefficients = np.load('go_coefficients.npz')
     coeffs = coefficients['coefficients']
     in_feature_names = coefficients['in_feature_names']
@@ -28,6 +42,8 @@ if __name__ == "__main__":
     adjacency_comparison = np.zeros((full_coeffs.shape[0], full_coeffs.shape[1]))
 
     #Iterate through indices of the full coefficients
+"""
+"""
     for i in range(full_coeffs.shape[0]):
         #Iterate through indices of the coefficients
         for j in range(coeffs.shape[0]):
@@ -42,6 +58,10 @@ if __name__ == "__main__":
             
             elif with_feature != 0 and without_feature == 0:
                 adjacency_comparison[i, j] = 1
+"""
+"""
+    #Redo with np.where
+    adjacency_comparison = np.where(full_coeffs == _coeffs, 0, full_coeffs - _coeffs)
 
 
     sns.heatmap(adjacency_comparison, cmap='viridis', center=0)
@@ -49,3 +69,4 @@ if __name__ == "__main__":
     plt.xticks(ticks=np.arange(len(full_out_feature_names)), labels=full_out_feature_names, rotation=90)
     plt.title("Adjacency Comparison With and Without Spatial Features", fontsize=16)
     plt.show()
+"""

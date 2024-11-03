@@ -18,6 +18,10 @@ from sklearn.linear_model import ElasticNet
 from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
 import json
+import numba
+from joblib import Parallel, delayed
+import time
+
 
 class SpatialTranscriptomicsData:
     """
@@ -129,19 +133,23 @@ class FeatureSetData:
     Essentially used to capture metagenes.
     """
 
-    def __init__(self, path:str, bin_key=1):
+    def __init__(self, path:str, bin_key="+"):
         self.path = path
         self.bin_key = bin_key
 
         self.annotations = pd.read_csv(path, index_col=0)
         self.feature_sets = list(self.annotations.columns)
         self.gene_names = list(self.annotations.index)
-        print(self.gene_names)
 
+        #Build a featureset2genes dict
+        self.featureset2genes = {feature_set: list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)]) for feature_set in self.feature_sets}
+
+    def get_genes_in_feature_set(self, feature_set:str):
+        return list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)])
+    
     def get_feature_sets_for_gene(self, gene:str):
-        #Get index of gene row
-        gene_idx = self.gene_names.index('A1BG')
-        print(gene_idx)
+        return list(self.annotations.columns[np.where(self.annotations.loc[gene] == self.bin_key)])
+
 class ModelFeature:
 
     def __init__(self, name):
@@ -277,6 +285,7 @@ class NeighborhoodMetageneFeature(ModelFeature):
 
     def compute_feature(self, **kwargs):
         """
+        This method currently works ok with numba optimization, but still takes about 12 minutes to run on the full dataset
         Parameters:
             alpha (float): Regularization parameter.
             radius (float): Neighborhood radius.
@@ -295,59 +304,51 @@ class NeighborhoodMetageneFeature(ModelFeature):
         self.alpha = alpha
 
         #Get the neighborhood radius
-        radius = kwargs.get('radius', 1.0)
+        radius = kwargs.get('radius', 0.1)
         self.radius = radius
+
+        cell_type = kwargs.get('cell_type', None)
+        if cell_type is not None:
+            indices = np.where(self.T == self.celltype2idx[cell_type])
+        else:
+            indices = np.arange(self.G.shape[0])
+        self.relevant_indices = list(indices)[0]
+        #print(self.relevant_indices.shape)
 
         #Get the neighborhood abundances
         self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.T, self.feature_set, radius)
 
         self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
+
+    @staticmethod
+    @numba.njit
+    def accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, cell_idx, feature_set_idx):
+        for neighbor in neighbors:
+            neighborhood_metagenes[cell_idx, feature_set_idx] += np.mean(G[neighbor, gene_indices])
+
     
     def _compute_neighborhood_metagenes(self, G, P, T, feature_set, radius):
-        """
-        Parameters:
-            G (numpy.ndarray): Cells-by-genes expression matrix.
-            P (numpy.ndarray): Cells-by-2 position matrix.
-            T (numpy.ndarray): Cells-by-cell types matrix.
-            feature_set (FeatureSetData): Feature set data object.
-            radius (float): Neighborhood radius.
-        """
-        n_cells = G.shape[0]
+        #n_cells = len(self.relevant_indices)
+        print(len(self.relevant_indices))
+        neighborhood_metagenes = np.zeros((len(self.relevant_indices), len(feature_set.feature_sets)))
+        tree = KDTree(P)
 
-        neighborhood_metagenes = np.zeros((n_cells, len(feature_set.feature_sets)))
-
-        #For each metagene in each cell, count the number of times any gene in the metagene is expressed in the neighborhood
-        for i in range(n_cells):
-            neighborhood_metagenes[i] = self._compute_neighborhood_metagene(G, P, i, feature_set, radius)
-    
-        return neighborhood_metagenes
-    
-    def _compute_neighborhood_metagene(self, G, P, i, feature_set, radius):
-        """
-        Parameters:
-            G (numpy.ndarray): Cells-by-genes expression matrix.
-            P (numpy.ndarray): Cells-by-2 position matrix.
-            i (int): Cell index.
-            feature_set (FeatureSetData): Feature set data object.
-            radius (float): Neighborhood radius.
-        """
-        n_cells = G.shape[0]
-        neighborhood_metagene = np.zeros(len(feature_set.feature_sets))
-
-        for j in range(n_cells):
-            if i == j:
-                continue
-
-            distance = np.linalg.norm(P[i] - P[j])
-
-            if distance <= radius:
-                for gene in feature_set.gene_names:
-                    genes_in_feature_set = feature_set.get_genes_in_feature_set(gene)
-                    if gene in genes_in_feature_set:
-                        gene_idx = feature_set.gene2idx[gene]
-                        neighborhood_metagene += G[j, gene_idx]
+        # Precompute gene indices for each feature set to avoid repetitive lookup
+        feature_indices = {
+            f: np.array([self.data.gene2idx[gene] for gene in feature_set.featureset2genes[feature_set_name] if gene in self.data.gene2idx])
+            for f, feature_set_name in enumerate(feature_set.feature_sets)
+        }
         
-        return neighborhood_metagene
+        def process_cell(i):
+            neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
+            for f, gene_indices in feature_indices.items():
+                self.accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, i, f)
+                
+        for i in tqdm(range(len(self.relevant_indices))):
+            process_cell(i)
+
+        neighborhood_metagenes = np.log1p(neighborhood_metagenes)
+        return neighborhood_metagenes
 
     def get_feature(self, **kwargs):
         """
@@ -355,7 +356,7 @@ class NeighborhoodMetageneFeature(ModelFeature):
             alpha (float): Regularization parameter.
             radius (float): Neighborhood radius.
         """
-        return self.neighborhood_metagenes, self.featureidx2celltype, [self.alpha] * self.neighborhood_metagenes.shape[1]
+        return self.neighborhood_metagenes, {i:v for i, v in enumerate(self.feature_set.feature_sets)}, [self.alpha] * self.neighborhood_metagenes.shape[1]
 
 
 def flatten_list(l):
@@ -370,7 +371,6 @@ class TranscriptSpace:
             labmd (float): Regularization parameter for the ElasticNet model.
         """
         self.st = st
-        self.gene_expression = GeneExpressionFeature(self.st, cell_type)
         self.in_features = in_features
         self.cell_type = cell_type
 
@@ -382,7 +382,11 @@ class TranscriptSpace:
     
         self.alphas = alphas
         
-    def fit(self, **kwargs):
+    def fit(self, filter, **kwargs):
+        self.gene_expression = GeneExpressionFeature(self.st, self.cell_type)
+        if filter is not None:
+            self.st.filter_genes(filter, **kwargs)
+        
         l1_ratio = kwargs.get('l1_ratio', 0.5)
         n_resamples = kwargs.get('n_resamples', 4)
         stability_threshold = kwargs.get('stability_threshold', 0.5)
@@ -406,9 +410,11 @@ class TranscriptSpace:
             expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
             expression_feature = np.log1p(expression_feature)
 
+            feature_matrices = list(feature_matrices)
+
             #With this feature scaling, everything is relative to gene expression
             for f, feature_matrix in enumerate(feature_matrices):
-                feature_matrix = np.log1p(feature_matrix * self.alphas[f])
+                feature_matrices[f] = feature_matrix * self.alphas[f]
 
             #Concat the gene expression feature with the other feature matrices
             X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
@@ -1105,12 +1111,7 @@ def filter_by_gene(data, G, **kwargs):
     return gene_indices
 
 if __name__ == "__main__":
-    stats = np.load('sample_statistics\\T CD8 memory_report.npz')
-    morans_i = stats['morans_I']
-    indices = np.argsort(morans_i)[::-1][:200]
-
-    genes = [stats['feature_names'][i] for i in indices]
-    print(genes)
+    feature_sets = FeatureSetData('cancer_annotations.csv', bin_key="+")
     
     G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
     P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
@@ -1118,17 +1119,19 @@ if __name__ == "__main__":
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
 
     st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
-    #st.filter_genes(st.covariance_threshold, threshold=0.95, cell_type='T CD8 memory')
-    st.filter_genes(filter_by_gene, genes=genes)
-    print(st.G.shape)
+    stats = np.load('sample_statistics\\Treg_report.npz')
+    morans_i = stats['morans_I']
+    indices = np.argsort(morans_i)[::-1][:250]
 
-    neighborhood_abundances = NeighborhoodAbundanceFeature(st)
+    genes = [stats['feature_names'][i] for i in indices]
+    #st.filter_genes(filter_by_gene, genes=genes)
 
-    #ts = TranscriptSpace(st, [neighborhood_abundances], [1.0], cell_type='T CD8 memory', lambd=1e-2*5)
-    ts = TranscriptSpace(st, [], [], cell_type='T CD8 memory', lambd=1e-2*5)
-    coeffs = ts.fit(radius=0.1)
-    #Save the coefficients
-    np.savez('go_coefficients.npz', **coeffs)
+    metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
+
+    ts = TranscriptSpace(st, [metagene_feature], [3.0], cell_type='Treg', lambd=1e-2*5)
+    #ts = TranscriptSpace(st, [], [], cell_type='Treg', lambd=1e-2*5)
+    coeffs = ts.fit(radius=0.1, filter=filter_by_gene, genes=genes)
+    np.savez('treg.npz', **coeffs)
     
 
 #Vignettes to use later
@@ -1178,4 +1181,27 @@ print("DONE")
 
     report = statistics.full_report(cell_type='Treg', distance_threshold=0.1, distances=np.linspace(0, 0.5, 2))
     np.savez('statistics.npz', **report)
+"""
+"""
+    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
+    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
+    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
+    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
+
+    for cell_type in annotations['cell_types']:
+        print(f"Training Model For Cell Type {cell_type}")
+        st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
+        stats = np.load(f'sample_statistics\\{cell_type}_report.npz')
+        morans_i = stats['morans_I']
+        indices = np.argsort(morans_i)[::-1][:250]
+
+        genes = [stats['feature_names'][i] for i in indices]
+        st.filter_genes(filter_by_gene, genes=genes)
+        neighborhood_abundances = NeighborhoodAbundanceFeature(st)
+
+        ts = TranscriptSpace(st, [neighborhood_abundances], [1.0], cell_type=cell_type, lambd=1e-2*5)
+        coeffs = ts.fit(radius=0.1)
+        np.savez(f'coefficients\\{cell_type}.npz', **coeffs)
+        print()
+        print()
 """

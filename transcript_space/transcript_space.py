@@ -58,8 +58,16 @@ class SpatialTranscriptomicsData:
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
     
     @staticmethod
-    def covariance_threshold(G, **kwargs):
+    def covariance_threshold(data, G, **kwargs):
         threshold = kwargs.get('threshold', 0.5)
+        cell_type = kwargs.get('cell_type', None)
+
+        if cell_type is not None:
+            i = np.where(data.T == data.celltype2idx[cell_type])
+        else:
+            i = np.arange(data.G.shape[0])
+        
+        G = G[i]
 
         #Get only the genes with the highest average covariance (If this gene changes, other genes are likely to change as well)
         cov_matrix = np.cov(G, rowvar=False)
@@ -70,7 +78,7 @@ class SpatialTranscriptomicsData:
         return gene_indices
 
     def filter_genes(self, filter:callable, **kwargs):
-        gene_indices = filter(self.G, **kwargs)
+        gene_indices = filter(self, self.G, **kwargs)
         self.G = self.G[:, gene_indices]
         self.gene_names = [self.gene_names[idx] for idx in gene_indices]
 
@@ -159,10 +167,9 @@ class GeneExpressionFeature(ModelFeature):
                 self.t = t
         
         i = np.where(self.data.T == self.t)
-        self.data.G = self.data.G[i]
+        self.G = self.data.G[i]
     
     def compute_feature(self, **kwargs):
-        self.G = self.data.G
         self.gene2idx = self.data.gene2idx
         #Get alpha or else default to 1.0
         self.alpha = kwargs.get('alpha', 1.0)
@@ -177,7 +184,7 @@ class GeneExpressionFeature(ModelFeature):
         gene_indices = [self.data.gene2idx[gene] for gene in genes]
 
         #Return the gene expression data and the gene names alongside the alpha vector
-        return self.data.G[:, gene_indices], {idx: gene for idx, gene in enumerate(genes)}, [None] * len(genes)
+        return self.G[:, gene_indices], {idx: gene for idx, gene in enumerate(genes)}, [None] * len(genes)
 
 class NeighborhoodAbundanceFeature(ModelFeature):
     
@@ -187,9 +194,15 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             self.data = data
         
         def compute_feature(self, **kwargs):
+
+            cell_type = kwargs.get('cell_type', None)
             self.G = self.data.G
             self.P = self.data.P
             self.T = self.data.T
+
+            print(f"The shape of G is {self.G.shape}")
+            print(f"The shape of P is {self.P.shape}")
+            print(f"The shape of T is {self.T.shape}")
     
             self.celltype2idx = self.data.celltype2idx
             self.idx2celltype = self.data.idx2celltype
@@ -201,15 +214,18 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             #Get the neighborhood radius
             radius = kwargs.get('radius', 0.1)
             self.radius = radius
-    
+
+            
             #Get the neighborhood abundances
-            if not os.path.exists('neighborhood_abundances.npy'):
-                self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
+            #if not os.path.exists('neighborhood_abundances.npy'):
+            self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
+            """
             else:
                 self.neighborhood_abundances = np.load('neighborhood_abundances.npy')
 
             #Save the neighborhood abundances to a npy file
             np.save('neighborhood_abundances.npy', self.neighborhood_abundances)
+            """
 
             self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
 
@@ -218,16 +234,17 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             if cell_type is not None:
                 cell_type_idx = self.celltype2idx[cell_type]
                 self.neighborhood_abundances = self.neighborhood_abundances[np.where(self.T == cell_type_idx)]
+            
+            self.neighborhood_abundances = np.log1p(self.neighborhood_abundances)
         
         def get_feature(self, **kwargs):
-            return self.neighborhood_abundances, self.featureidx2celltype, [self.alpha] * self.neighborhood_abundances.shape[1]
+            return self.neighborhood_abundances, self.data.idx2celltype, [self.alpha] * self.neighborhood_abundances.shape[1]
 
         def _compute_neighborhood_abundances(self, G, P, T, radius):
             n_cells = G.shape[0]
             #Reshape T to be a 2d array from a 1d array of strings
             T_ = np.zeros((n_cells, len(self.celltype2idx)))
             for i in range(n_cells):
-                #print(T[i])
                 T_[i, T[i]] = 1
             
             T = T_
@@ -357,6 +374,8 @@ class TranscriptSpace:
         self.in_features = in_features
         self.cell_type = cell_type
 
+        self.lambd = lambd
+
         #Compute feature for every feature
         for feature in self.in_features:
             feature.compute_feature(cell_type=cell_type)
@@ -375,7 +394,7 @@ class TranscriptSpace:
         self.coefficients = np.zeros((indim+1, outdim))
 
         #Unwrap the in_feature names
-        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
+        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features]) + self.st.gene_names
         out_feature_names = self.st.gene_names
 
         for gi in tqdm(range(outdim), f"Training Models For Cell Type {self.cell_type}"):
@@ -394,13 +413,14 @@ class TranscriptSpace:
             #Concat the gene expression feature with the other feature matrices
             X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
             fd = {**expression_dict, **{k: v for d in feature_dicts for k, v in d.items()}}
-
-            y = self.st.G[:, gi]
+            
+            y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
 
             resample_coefficients = []
             for r in range(n_resamples):
                 X, y = resample(X, y)
-                model = ElasticNet(alpha=1e-3, l1_ratio=l1_ratio)
+                #model = ElasticNet(alpha=self.lambd, l1_ratio=l1_ratio)
+                model = Lasso(alpha=self.lambd)
                 model.fit(X, y)
                 resample_coefficients.append(model.coef_)
             
@@ -1076,20 +1096,40 @@ class SpatialStastics:
 
 #I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
+def filter_by_gene(data, G, **kwargs):
+    """
+    Filters the data by genes
+    """
+    genes = kwargs.get('genes', [])
+    gene_indices = [data.gene2idx[gene] for gene in genes]
+    return gene_indices
+
 if __name__ == "__main__":
+    stats = np.load('sample_statistics\\T CD8 memory_report.npz')
+    morans_i = stats['morans_I']
+    indices = np.argsort(morans_i)[::-1][:200]
+
+    genes = [stats['feature_names'][i] for i in indices]
+    print(genes)
+    
     G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
     P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
     T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
 
     st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
-    st.filter_genes(st.covariance_threshold, threshold=0.95)
+    #st.filter_genes(st.covariance_threshold, threshold=0.95, cell_type='T CD8 memory')
+    st.filter_genes(filter_by_gene, genes=genes)
+    print(st.G.shape)
 
     neighborhood_abundances = NeighborhoodAbundanceFeature(st)
-    print(st.celltype2idx.keys())
-    #ts = TranscriptSpace(st, [neighborhood_abundances], [4.0], cell_type='Treg')
-    ts = TranscriptSpace(st, [], [], cell_type='T CD8 memory')
-    ts.fit(radius=0.1)
+
+    #ts = TranscriptSpace(st, [neighborhood_abundances], [1.0], cell_type='T CD8 memory', lambd=1e-2*5)
+    ts = TranscriptSpace(st, [], [], cell_type='T CD8 memory', lambd=1e-2*5)
+    coeffs = ts.fit(radius=0.1)
+    #Save the coefficients
+    np.savez('go_coefficients.npz', **coeffs)
+    
 
 #Vignettes to use later
 """

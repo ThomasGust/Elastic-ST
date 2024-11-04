@@ -19,8 +19,7 @@ from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
 import json
 import numba
-from joblib import Parallel, delayed
-import time
+import warnings
 
 
 class SpatialTranscriptomicsData:
@@ -226,6 +225,12 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             
             #Get the neighborhood abundances
             #if not os.path.exists('neighborhood_abundances.npy'):
+            cell_type = kwargs.get('cell_type', None)
+            if cell_type is not None:
+                cell_type_idx = self.celltype2idx[cell_type]
+                indices = np.where(self.T == cell_type_idx)
+            
+            self.relevant_indices = list(indices)[0]
             self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
             """
             else:
@@ -236,12 +241,6 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             """
 
             self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
-
-            #Get desired cell type from kwargs
-            cell_type = kwargs.get('cell_type', None)
-            if cell_type is not None:
-                cell_type_idx = self.celltype2idx[cell_type]
-                self.neighborhood_abundances = self.neighborhood_abundances[np.where(self.T == cell_type_idx)]
             
             self.neighborhood_abundances = np.log1p(self.neighborhood_abundances)
         
@@ -258,14 +257,14 @@ class NeighborhoodAbundanceFeature(ModelFeature):
             T = T_
             n_cell_types = T.shape[1]
 
-            neighborhood_abundances = np.zeros((n_cells, n_cell_types))
+            neighborhood_abundances = np.zeros((len(self.relevant_indices), n_cell_types))
 
             #Use a KDTree to find the nearest neighbors
             tree = KDTree(P)
-            for i in tqdm(range(n_cells)):
+            for i, idx in enumerate(tqdm(self.relevant_indices, desc="Computing Neighborhood Abundances")):
                 
                 #Get the neighbors within the radius
-                neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
+                neighbors = tree.query_radius(P[idx].reshape(1, -1), r=radius)[0]
                 for neighbor in neighbors:
                     neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
@@ -344,7 +343,7 @@ class NeighborhoodMetageneFeature(ModelFeature):
             for f, gene_indices in feature_indices.items():
                 self.accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, i, f)
                 
-        for i in tqdm(range(len(self.relevant_indices))):
+        for i in tqdm(range(len(self.relevant_indices)), desc="Computing Neighborhood Metagenes"):
             process_cell(i)
 
         neighborhood_metagenes = np.log1p(neighborhood_metagenes)
@@ -382,63 +381,95 @@ class TranscriptSpace:
     
         self.alphas = alphas
         
-    def fit(self, filter, **kwargs):
+    def fit(self, include_expression, filter, **kwargs):
         self.gene_expression = GeneExpressionFeature(self.st, self.cell_type)
         if filter is not None:
             self.st.filter_genes(filter, **kwargs)
-        
-        l1_ratio = kwargs.get('l1_ratio', 0.5)
-        n_resamples = kwargs.get('n_resamples', 4)
-        stability_threshold = kwargs.get('stability_threshold', 0.5)
+    
+        n_resamples = kwargs.get('n_resamples', None)
         
         #Get the feature dimension of each feature matrix
-        indim = (self.st.G.shape[1]-1)+sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+        if include_expression:
+            indim = (self.st.G.shape[1]-1)+sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+        else:
+            indim = sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+
         outdim = self.st.G.shape[1]
 
-        self.coefficients = np.zeros((indim+1, outdim))
+        if include_expression:
+            self.coefficients = np.zeros((indim+1, outdim))
+        else:
+            self.coefficients = np.zeros((indim, outdim))
 
         #Unwrap the in_feature names
-        in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features]) + self.st.gene_names
+        if include_expression:
+            in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features]) + self.st.gene_names
+        else:
+            in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
         out_feature_names = self.st.gene_names
 
+        if n_resamples is not None:
+            convergence_warnings = np.zeros((outdim, n_resamples))
+        else:
+            convergence_warnings = np.zeros(outdim)
         for gi in tqdm(range(outdim), f"Training Models For Cell Type {self.cell_type}"):
             #TODO, I guess we don't even need the name dicts here because we are zeroing out the diagonal for self connections
             if len(self.in_features) != 0:
                 feature_matrices, feature_dicts, _ = zip(*[feature.get_feature(exclude_genes=[self.st.idx2gene[gi]]) for feature in self.in_features])
             else:
                 feature_matrices, feature_dicts, _ = [], [], []
-            expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
-            expression_feature = np.log1p(expression_feature)
-
+            
             feature_matrices = list(feature_matrices)
 
             #With this feature scaling, everything is relative to gene expression
             for f, feature_matrix in enumerate(feature_matrices):
                 feature_matrices[f] = feature_matrix * self.alphas[f]
 
-            #Concat the gene expression feature with the other feature matrices
-            X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
-            fd = {**expression_dict, **{k: v for d in feature_dicts for k, v in d.items()}}
+            if include_expression:
+                expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
+                expression_feature = np.log1p(expression_feature)
+                X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
+            else:
+                X = np.concatenate(feature_matrices, axis=1)
             
             y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
 
-            resample_coefficients = []
-            for r in range(n_resamples):
-                X, y = resample(X, y)
-                #model = ElasticNet(alpha=self.lambd, l1_ratio=l1_ratio)
+            if n_resamples is not None:
+                for resample in range(n_resamples):
+                    l = self.lambd * (2 ** resample)
+                    model = Lasso(alpha=l)
+                    with warnings.catch_warnings():
+                            
+                            warnings.filterwarnings('error')
+                            try:
+                                model.fit(X, y)
+                                coeffs = model.coef_
+                                break
+                            except Warning:
+                                convergence_warnings[gi] = 1
+                                coeffs = np.zeros(X.shape[1])
+                                print(f"Warning for gene {gi}")
+            else:
                 model = Lasso(alpha=self.lambd)
-                model.fit(X, y)
-                resample_coefficients.append(model.coef_)
-            
-            #For any coefficents that existed a percent of times greater than the stability threshold, add the mean of their non-zero values, else add 0
-            times_existed = np.sum(np.array(resample_coefficients) != 0, axis=0)
-            mean_coeffs = np.mean(np.array(resample_coefficients), axis=0)
 
-            coeffs = np.where(times_existed > stability_threshold, mean_coeffs, 0)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('error')
+                    try:
+                        model.fit(X, y)
+                        coeffs = model.coef_
+                    except Warning:
+                        convergence_warnings[gi] = 1
+                        coeffs = np.zeros(X.shape[1])
+
             #Insert a 0 for the gene expression self connection
-            self.coefficients[:, gi] = np.insert(coeffs, gi, 0)
+            if include_expression:
+                #Get index of gi feature in in feature names
+                gi_idx = in_feature_names.index(self.st.idx2gene[gi])
+                self.coefficients[:, gi] = np.insert(coeffs, gi_idx, 0)
+            else:
+                self.coefficients[:, gi] = coeffs
         
-        coefficient_record = {'coefficients': self.coefficients, 'in_feature_names': in_feature_names, 'out_feature_names': out_feature_names}
+        coefficient_record = {'coefficients': self.coefficients, 'in_feature_names': in_feature_names, 'out_feature_names': out_feature_names, 'convergence_warnings': convergence_warnings}
         return coefficient_record
 
 class CoefficientAnalysis:
@@ -449,22 +480,12 @@ class CoefficientAnalysis:
         #self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
 
-
-    def zero_diagonal(self):
-        m = self.coefficient_matrix.coefficients.shape[1]
-        # Create a zero matrix of shape (m, m)
-        new_matrix = np.zeros((m, m))
-
-        # Fill the new matrix with the original data
-        new_matrix[~np.eye(m, dtype=bool)] = self.coefficient_matrix.coefficients.ravel()
-        self.coefficient_matrix.coefficients = new_matrix
-
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
-        for i, in_feature in enumerate(self.coefficient_matrix.in_features):
-            for j, out_feature in enumerate(self.coefficient_matrix.out_features):
-                weight = self.coefficient_matrix.coefficients[i, j]
+        for i, in_feature in enumerate(self.coefficient_matrix["in_feature_names"]):
+            for j, out_feature in enumerate(self.coefficient_matrix["out_feature_names"]):
+                weight = self.coefficient_matrix["coefficients"][i, j]
                 if i != j and weight != 0 and abs(weight) > threshold:
                     G.add_edge(in_feature, out_feature, weight=weight)
         
@@ -474,7 +495,7 @@ class CoefficientAnalysis:
         #Get the layout
         layout = kwargs.get('layout', 'spring')
         pos = nx.spring_layout(self.graph)
-        nx.draw(self.graph, pos, with_labels=True)
+        nx.draw(self.graph, pos, with_labels=True, node_size=5, font_size=8, font_color='black', edge_color='black', node_color='blue', width=0.1)
 
         plt.show()
     
@@ -1121,17 +1142,20 @@ if __name__ == "__main__":
     st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
     stats = np.load('sample_statistics\\Treg_report.npz')
     morans_i = stats['morans_I']
-    indices = np.argsort(morans_i)[::-1][:250]
+    indices = np.argsort(morans_i)[::-1][:500]
 
     genes = [stats['feature_names'][i] for i in indices]
     #st.filter_genes(filter_by_gene, genes=genes)
 
+    cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
     metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
 
-    ts = TranscriptSpace(st, [metagene_feature], [3.0], cell_type='Treg', lambd=1e-2*5)
-    #ts = TranscriptSpace(st, [], [], cell_type='Treg', lambd=1e-2*5)
-    coeffs = ts.fit(radius=0.1, filter=filter_by_gene, genes=genes)
+    ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [6.0, 6.0], cell_type='Treg', lambd=1e-2)
+    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=10)
     np.savez('treg.npz', **coeffs)
+
+    coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.35)
+    coeffiicent_analysis.plot_coefficient_graph()
     
 
 #Vignettes to use later

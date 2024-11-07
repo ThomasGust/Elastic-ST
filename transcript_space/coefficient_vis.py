@@ -9,7 +9,7 @@ from transcript_space import CoefficientAnalysis
 
 if __name__ == "__main__":
     coefficients = np.load('treg.npz')
-    analysis = CoefficientAnalysis(coefficients, 0.2)
+    analysis = CoefficientAnalysis(coefficients, 0.08)
     analysis.plot_coefficient_graph()
 
 """

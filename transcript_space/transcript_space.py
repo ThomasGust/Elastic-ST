@@ -469,8 +469,6 @@ class TranscriptSpace:
                                 convergence_warnings[gi, r, retry] = 1
                                 coeffs = np.zeros(X.shape[1])
                                 print(f"Warning for gene {gi}")
-                                resample_coefficients.append(coeffs)
-                                break
                             resample_coefficients.append(coeffs)
         
             coeffs = np.mean(resample_coefficients, axis=0)
@@ -492,7 +490,8 @@ class CoefficientAnalysis:
 
         #self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
-
+    
+    #@numba.njit
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
@@ -1165,7 +1164,7 @@ if __name__ == "__main__":
 
     #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [6.0, 6.0], cell_type='Treg', lambd=1e-2)
     ts = TranscriptSpace(st, [cell_type_abundance_feature], [6.0], cell_type='Treg', lambd=1e-3)
-    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=10)
+    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=3)
     np.savez('treg.npz', **coeffs)
 
     coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.2)

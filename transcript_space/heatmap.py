@@ -22,14 +22,12 @@ if __name__ == "__main__":
     for gene_set in gene_set_names:
         gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
     
-    st.remap_metagenes(gene_sets)
+    #st.remap_metagenes(gene_sets)
     
     #meta = 'GAVISH_3CA_MALIGNANT_METAPROGRAM_12_EMT_1'
 
-    
-
-    meta = 'GAVISH_3CA_MALIGNANT_METAPROGRAM_12_EMT_1'
-    t = 'epithelial.cancer.subtype_2'
+    meta = 'LDHA'
+    t = 'Treg'
     _i = np.where(st.T == st.celltype2idx[t])
 
 

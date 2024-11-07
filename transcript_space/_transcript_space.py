@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
 from sklearn.preprocessing import StandardScaler
-from sklearn.utils import resample
 import json as json
 import os
 import pandas as pd
@@ -17,6 +16,7 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import ElasticNet
 from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
+from sklearn.utils import resample
 import json
 import numba
 import warnings
@@ -363,6 +363,7 @@ class NeighborhoodMetageneFeature(ModelFeature):
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
+
 class TranscriptSpace:
 
     def __init__(self, st, in_features:list[ModelFeature], alphas:list, lambd:float=1e-3, cell_type='epithelial.cancer.subtype_1'):
@@ -390,7 +391,8 @@ class TranscriptSpace:
             self.st.filter_genes(filter, **kwargs)
     
         n_resamples = kwargs.get('n_resamples', None)
-        n_retries = kwargs.get('n_retries', 10)
+        n_retries = kwargs.get('n_retries', None)
+        stability_threshold = kwargs.get('stability_threshold', 0.5)
         
         #Get the feature dimension of each feature matrix
         if include_expression:
@@ -412,10 +414,8 @@ class TranscriptSpace:
             in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
         out_feature_names = self.st.gene_names
 
-        if n_resamples is not None:
-            convergence_warnings = np.zeros((outdim, n_resamples, n_retries))
-        else:
-            convergence_warnings = np.zeros(outdim)
+        convergence_warnings = np.zeros((outdim, n_resamples, n_retries))
+
         for gi in tqdm(range(outdim), f"Training Models For Cell Type {self.cell_type}"):
             #TODO, I guess we don't even need the name dicts here because we are zeroing out the diagonal for self connections
             if len(self.in_features) != 0:
@@ -438,49 +438,47 @@ class TranscriptSpace:
             
             y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
 
-            #Normalize X
-            X = StandardScaler().fit_transform(X)
-            y = StandardScaler().fit_transform(y.reshape(-1, 1)).flatten()
+            if n_resamples is not None and n_retries is not None:
+                rXs, rys = resample(X, y, n_resamples=n_resamples)
+                print(rXs.shape, rys.shape)
+                
+                resample_coeffs = []
+                for r in range(n_resamples):
+                    for retry in range(n_retries):
+                        l = self.lambd * (2 ** retry)
+                        rx = rXs[r]
+                        ry = rys[r]
 
-            resample_coefficients = []
-
-            Xs, ys = resample(X, y, n_samples=n_resamples*X.shape[0])
-            Xs = np.reshape(Xs, (n_resamples, X.shape[0], X.shape[1]))
-            ys = np.reshape(ys, (n_resamples, X.shape[0]))
-
-            for r in range(n_resamples):
-                X = Xs[r]
-                y = ys[r]
-
-
-                for retry in range(n_retries):
-                    l = self.lambd * (2 ** retry)
-                    model = Lasso(alpha=l)
-
-                    with warnings.catch_warnings():
+                        model = Lasso(alpha=l)
+                        
+                        with warnings.catch_warnings():
                             warnings.filterwarnings('error')
-
                             try:
-                                model.fit(X, y)
+                                model.fit(rx, ry)
                                 coeffs = model.coef_
-                                resample_coefficients.append(coeffs)
+                                resample_coeffs.append(coeffs)
                                 break
                             except Warning:
-                                convergence_warnings[gi, r, retry] = 1
+                                convergence_warnings[gi, resample, retry] = 1
                                 coeffs = np.zeros(X.shape[1])
                                 print(f"Warning for gene {gi}")
-                                resample_coefficients.append(coeffs)
-                                break
-                            resample_coefficients.append(coeffs)
-        
-            coeffs = np.mean(resample_coefficients, axis=0)
+                    resample_coeffs.append(coeffs)
+    
+                    
+                #Check for stability
+                resample_coeffs = np.array(resample_coeffs)
+                print("COEFFICIENTS SHAPE", resample_coeffs.shape)
 
+                #Get number of times each coefficient is non-zero
+                non_zero_counts = np.sum(resample_coeffs != 0, axis=0)
+                stable_coefficients = np.where(non_zero_counts > stability_threshold * n_retries)[0]
 
-            if include_expression:
-                gi_idx = in_feature_names.index(self.st.idx2gene[gi])
-                self.coefficients[:, gi] = np.insert(coeffs, gi_idx, 0)
-            else:
-                self.coefficients[:, gi] = coeffs
+                if include_expression:
+                    gi_idx = in_feature_names.index(self.st.idx2gene[gi])
+                    self.coefficients[:, gi] = np.insert(stable_coefficients, gi_idx, 0)
+                
+                else:
+                    self.coefficients[:, gi] = stable_coefficients
         
         coefficient_record = {'coefficients': self.coefficients, 'in_feature_names': in_feature_names, 'out_feature_names': out_feature_names, 'convergence_warnings': convergence_warnings}
         return coefficient_record
@@ -496,7 +494,7 @@ class CoefficientAnalysis:
     def build_coefficient_graph(self, threshold:float):
         G = nx.Graph()
 
-        for i, in_feature in enumerate(tqdm(self.coefficient_matrix["in_feature_names"], desc="Building Coefficient Graph")):
+        for i, in_feature in enumerate(self.coefficient_matrix["in_feature_names"]):
             for j, out_feature in enumerate(self.coefficient_matrix["out_feature_names"]):
                 weight = self.coefficient_matrix["coefficients"][i, j]
                 if i != j and weight != 0 and abs(weight) > threshold:
@@ -1134,7 +1132,6 @@ class SpatialStastics:
             report = self.full_report(**kwargs)
             np.savez(os.path.join(out_directory, f'{cell_type}_report.npz'), **report)
 
-#I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
 def filter_by_gene(data, G, **kwargs):
     """
@@ -1145,31 +1142,8 @@ def filter_by_gene(data, G, **kwargs):
     return gene_indices
 
 if __name__ == "__main__":
-    feature_sets = FeatureSetData('cancer_annotations.csv', bin_key="+")
-    
-    G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
-    P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
-    T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
-    annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
-
-    st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
-    
     stats = np.load('statistics.npz')
-    morans_i = stats['morans_I']
-    indices = np.argsort(morans_i)[::-1][:250]
-    genes = [stats['feature_names'][i] for i in indices]
-    st.filter_genes(filter_by_gene, genes=genes)
-    cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
-
-   # metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
-
-    #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [6.0, 6.0], cell_type='Treg', lambd=1e-2)
-    ts = TranscriptSpace(st, [cell_type_abundance_feature], [6.0], cell_type='Treg', lambd=1e-3)
-    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=10)
-    np.savez('treg.npz', **coeffs)
-
-    coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.2)
-    coeffiicent_analysis.plot_coefficient_graph()
+    print(stats['feature_names'])
     
 
 #Vignettes to use later

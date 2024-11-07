@@ -22,13 +22,22 @@ if __name__ == "__main__":
     for gene_set in gene_set_names:
         gene_sets.append((gene_set, list(cancer_gene_sets[gene_set]['geneSymbols'])))
     
-    #st.remap_metagenes(gene_sets)
+    st.remap_metagenes(gene_sets)
     
     #meta = 'GAVISH_3CA_MALIGNANT_METAPROGRAM_12_EMT_1'
-    meta = 'PIGR'
+
+    
+
+    meta = 'GAVISH_3CA_MALIGNANT_METAPROGRAM_12_EMT_1'
     t = 'epithelial.cancer.subtype_2'
     _i = np.where(st.T == st.celltype2idx[t])
-    expression = np.log1p(st.G[_i][:, st.gene2idx[meta]])
+
+
+    #expression = np.log1p(st.G[_i][:, st.gene2idx[meta]])
+    #Instead of log, do a normalization between 0 and 1
+    expression = st.G[_i][:, st.gene2idx[meta]]
+    expression = (expression - np.min(expression)) / (np.max(expression) - np.min(expression))
+
     x = st.P[_i][:, 0]
     y = st.P[_i][:, 1]
     data = pd.DataFrame({

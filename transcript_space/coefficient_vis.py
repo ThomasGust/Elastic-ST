@@ -1,12 +1,18 @@
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from transcript_space import CoefficientAnalysis
 
 #stats = np.load('sample_statistics\\T CD8 memory_report.npz')
 #morans_i = stats['morans_I']
 #indices = np.argsort(morans_i)[::-1][:200]
 
 if __name__ == "__main__":
+    coefficients = np.load('treg.npz')
+    analysis = CoefficientAnalysis(coefficients, 0.2)
+    analysis.plot_coefficient_graph()
+
+"""
     coefficients = np.load('go_coefficients.npz')
     coeffs = coefficients['coefficients']
     in_feature_names = coefficients['in_feature_names']
@@ -69,3 +75,5 @@ if __name__ == "__main__":
     plt.xticks(ticks=np.arange(len(full_out_feature_names)), labels=full_out_feature_names, rotation=90)
     plt.title("Adjacency Comparison With and Without Spatial Features", fontsize=16)
     plt.show()
+
+"""

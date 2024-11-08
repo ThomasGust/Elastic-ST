@@ -19,6 +19,7 @@ from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
 import json
 import numba
+import heapq
 import warnings
 
 
@@ -488,26 +489,112 @@ class CoefficientAnalysis:
     def __init__(self, coefficient_matrix, graph_threshold):
         self.coefficient_matrix = coefficient_matrix
 
+        self.spatial_features = []
+
+        for i, in_feature in enumerate(self.coefficient_matrix["in_feature_names"]):
+            if in_feature not in self.coefficient_matrix["out_feature_names"]:
+                self.spatial_features.append(in_feature)
+        
+        #print(self.spatial_features)
         #self.zero_diagonal()
         self.graph = self.build_coefficient_graph(graph_threshold)
+
+        self.gene_features = [feature for feature in self.coefficient_matrix["in_feature_names"] if feature not in self.spatial_features]
     
-    #@numba.njit
-    def build_coefficient_graph(self, threshold:float):
+    def build_coefficient_graph(self, threshold: float):
         G = nx.Graph()
 
-        for i, in_feature in enumerate(tqdm(self.coefficient_matrix["in_feature_names"], desc="Building Coefficient Graph")):
-            for j, out_feature in enumerate(self.coefficient_matrix["out_feature_names"]):
-                weight = self.coefficient_matrix["coefficients"][i, j]
-                if i != j and weight != 0 and abs(weight) > threshold:
-                    G.add_edge(in_feature, out_feature, weight=weight)
-        
+        # Cache references to avoid repeated dictionary lookups
+        in_feature_names = np.array(self.coefficient_matrix["in_feature_names"])
+        out_feature_names = np.array(self.coefficient_matrix["out_feature_names"])
+        coefficients = self.coefficient_matrix["coefficients"]
+
+        # Create a mask for coefficients that exceed the threshold
+        mask = np.abs(coefficients) > threshold
+
+        # Extract the indices where the mask is True (i.e., weights above the threshold)
+        rows, cols = np.where(mask)
+
+        # Extract the corresponding feature names and weights
+        edge_list = [
+            (in_feature_names[i], out_feature_names[j], coefficients[i, j])
+            for i, j in zip(rows, cols)
+        ]
+
+        # Add edges to the graph with the weight attribute
+        G.add_weighted_edges_from(edge_list)
+
         return G
+    def graph_spatial_energy(self):
+        """
+        Try to assign directionality to the graph based on proximity to spatial features.
+        Directions will go from spatial features to non-spatial features. This function assigns 
+        a direction to each edge based on its nodes' proximity to spatial features and the weights of other edges.
+        """
+        distances = {node: float('inf') for node in self.graph.nodes}
+        visited = set()  # Track nodes that have been processed
+
+        # Set distance of source nodes to 0 and add them to the priority queue
+        priority_queue = []
+        for source in self.spatial_features:
+            if source in self.graph.nodes:
+                distances[source] = 0
+                heapq.heappush(priority_queue, (0, source))
+
+        progress_bar = tqdm(total=len(self.graph.nodes), desc="Computing Graph Spatial Energy", dynamic_ncols=True)
+
+        while priority_queue:
+            progress_bar.set_postfix(queue_size=len(priority_queue))
+            current_distance, current_node = heapq.heappop(priority_queue)
+
+            # Skip processing if this node is already visited
+            if current_node in visited:
+                continue
+
+            # Mark the node as visited once we finalize its shortest distance
+            visited.add(current_node)
+            progress_bar.update(1)
+
+            # Process neighbors of the current node
+            for neighbor in list(self.graph.neighbors(current_node)):
+                edge_weight = self.graph[current_node][neighbor]['weight']
+                new_distance = current_distance + edge_weight
+
+                # If a shorter path to neighbor is found, update it
+                if new_distance < distances[neighbor]:
+                    distances[neighbor] = new_distance
+                    heapq.heappush(priority_queue, (new_distance, neighbor))
+
+        progress_bar.close()
+
+        # Step 3: Create a directed graph with weighted directionality based on distance gradients
+        DG = nx.DiGraph()
+        for u, v in tqdm(list(self.graph.edges()), desc='Constructing New Edges'):
+            # Calculate distance gradient from u to v and v to u
+            if distances[u] < float('inf') and distances[v] < float('inf'):
+                distance_uv = distances[v] - distances[u]
+                distance_vu = distances[u] - distances[v]
+
+                if distance_uv < distance_vu:
+                    DG.add_edge(v, u, edge_weight=self.graph[u][v]['weight'], direction_confidence=distance_uv)
+                else:
+                    DG.add_edge(u, v, edge_weight=self.graph[u][v]['weight'], direction_confidence=distance_vu)
+            
+            #Also handle components disconnected from the gradient
+            else:
+                DG.add_edge(u, v, edge_weight=self.graph[u][v]['weight'], direction_confidence=0)
+                DG.add_edge(v, u, edge_weight=self.graph[u][v]['weight'], direction_confidence=0)
+
+        self.graph = DG
 
     def plot_coefficient_graph(self, **kwargs):
         #Get the layout
         layout = kwargs.get('layout', 'spring')
         pos = nx.spring_layout(self.graph)
-        nx.draw(self.graph, pos, with_labels=True, node_size=5, font_size=8, font_color='black', edge_color='black', node_color='blue', width=0.1)
+
+        #Do red for spatial features
+        node_colors = ['red' if node in self.spatial_features else 'blue' for node in self.graph.nodes]
+        nx.draw(self.graph, pos, with_labels=True, node_size=5, font_size=8, font_color='black', edge_color='black', node_color=node_colors, width=0.1)
 
         plt.show()
     

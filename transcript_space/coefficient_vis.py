@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 if __name__ == "__main__":
-    coefficients = np.load('treg.npz')
+    coefficients = np.load('cancer2.npz')
     analysis = CoefficientAnalysis(coefficients, 0.08)
     analysis.plot_coefficient_graph()
     

@@ -738,7 +738,7 @@ class CoefficientAnalysis:
         """
         return dict(nx.algorithms.flow.maximum_flow(self.graph))
 
-class SpatialStastics:
+class SpatialStatistics:
     """
     Module for computing spatial statistics on spatial transcriptomics data. We can get stuff like the genexgene covariance matrix and spatial autocorrelation.
     """
@@ -1245,14 +1245,12 @@ if __name__ == "__main__":
     indices = np.argsort(morans_i)[::-1][:250]
     genes = [stats['feature_names'][i] for i in indices]
     st.filter_genes(filter_by_gene, genes=genes)
-    cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
+    #cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
 
-   # metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
-
-    #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [6.0, 6.0], cell_type='Treg', lambd=1e-2)
-    ts = TranscriptSpace(st, [cell_type_abundance_feature], [6.0], cell_type='Treg', lambd=1e-3)
+    #ts = TranscriptSpace(st, [cell_type_abundance_feature], [1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
+    ts = TranscriptSpace(st, [], [], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
     coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=3)
-    np.savez('treg.npz', **coeffs)
+    np.savez('cancer2.npz', **coeffs)
 
     coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.2)
     coeffiicent_analysis.plot_coefficient_graph()

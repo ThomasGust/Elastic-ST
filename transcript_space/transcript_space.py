@@ -10,7 +10,7 @@ from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform, cdist
 from scipy.stats import multivariate_normal
-from sklearn.linear_model import Lasso
+from sklearn.linear_model import Lasso, LassoLars
 #Get KDTree from sklearn
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
@@ -21,6 +21,7 @@ import json
 import numba
 import heapq
 import warnings
+from joblib import Parallel, delayed
 
 
 class SpatialTranscriptomicsData:
@@ -270,88 +271,102 @@ class NeighborhoodAbundanceFeature(ModelFeature):
                     neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
 
-class NeighborhoodMetageneFeature(ModelFeature):
-    """Compute the neighborhood abundance of all the genes in a given feature set"""
-    def __init__(self, data:SpatialTranscriptomicsData, feature_set:FeatureSetData):
-        super().__init__("neighborhood_metagene")
-        """
-        Parameters:
-            data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
-            feature_set (FeatureSetData): Feature set data object.
-        """
 
+
+class NeighborhoodMetageneFeature(ModelFeature):
+    """Compute the neighborhood abundance of all the genes in a given feature set."""
+    
+    def __init__(self, data: SpatialTranscriptomicsData, feature_set: FeatureSetData):
+        super().__init__("neighborhood_metagene")
         self.data = data
         self.feature_set = feature_set
 
     def compute_feature(self, **kwargs):
         """
-        This method currently works ok with numba optimization, but still takes about 12 minutes to run on the full dataset
+        Compute the neighborhood metagenes for the specified spatial transcriptomics data.
+        
         Parameters:
-            alpha (float): Regularization parameter.
-            radius (float): Neighborhood radius.
+            alpha (float): Regularization parameter, default is 1.0.
+            radius (float): Neighborhood radius, default is 0.1.
+            cell_type (str): Type of cell to filter by (optional).
         """
         self.G = self.data.G
         self.P = self.data.P
         self.T = self.data.T
-
         self.celltype2idx = self.data.celltype2idx
         self.idx2celltype = self.data.idx2celltype
 
-        self.feature_set = self.feature_set
-
-        #Get alpha or else default to 1.0
+        # Set parameters
         alpha = kwargs.get('alpha', 1.0)
         self.alpha = alpha
-
-        #Get the neighborhood radius
         radius = kwargs.get('radius', 0.1)
         self.radius = radius
 
+        # Filter by cell type if specified
         cell_type = kwargs.get('cell_type', None)
         if cell_type is not None:
-            indices = np.where(self.T == self.celltype2idx[cell_type])
+            indices = np.where(self.T == self.celltype2idx[cell_type])[0]
         else:
             indices = np.arange(self.G.shape[0])
-        self.relevant_indices = list(indices)[0]
-        #print(self.relevant_indices.shape)
+        self.relevant_indices = indices
 
-        #Get the neighborhood abundances
-        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.T, self.feature_set, radius)
+        # Compute neighborhood metagenes
+        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.feature_set, radius)
 
-        self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
+        np.save('metagene_features.npy', self.neighborhood_metagenes)
 
     @staticmethod
-    #@numba.njit
-    def accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, cell_idx, feature_set_idx):
-        for neighbor in neighbors:
-            if gene_indices.size == 0:
-                continue
-            else:
-                neighborhood_metagenes[cell_idx, feature_set_idx] += np.mean(G[neighbor, gene_indices])
+    @numba.njit
+    def accumulate_metagenes(metagenes_for_cell, neighbors, G, gene_indices):
+        """
+        Accumulate metagenes for a cell by averaging gene expression values of neighboring cells.
+        """
+        if gene_indices.size > 0:
+            # Calculate mean expression of neighbors' genes and accumulate
+            metagenes_for_cell += np.mean(G[neighbors][:, gene_indices])
 
-    
-    def _compute_neighborhood_metagenes(self, G, P, T, feature_set, radius):
-        #n_cells = len(self.relevant_indices)
-        print(len(self.relevant_indices))
+    def _compute_neighborhood_metagenes(self, G, P, feature_set, radius):
+        """
+        Core function to calculate neighborhood metagenes using a KDTree for neighbor searches.
+        
+        Parameters:
+            G (np.ndarray): Gene expression matrix.
+            P (np.ndarray): Spatial coordinates of the cells.
+            feature_set (FeatureSetData): Feature set data.
+            radius (float): Neighborhood radius for the KDTree.
+
+        Returns:
+            np.ndarray: Matrix of neighborhood metagenes.
+        """
+        # Initialize the output matrix
         neighborhood_metagenes = np.zeros((len(self.relevant_indices), len(feature_set.feature_sets)))
         tree = KDTree(P)
 
-        # Precompute gene indices for each feature set to avoid repetitive lookup
+        # Precompute gene indices for each feature set
         feature_indices = {
             f: np.array([self.data.gene2idx[gene] for gene in feature_set.featureset2genes[feature_set_name] if gene in self.data.gene2idx])
             for f, feature_set_name in enumerate(feature_set.feature_sets)
         }
-        
-        def process_cell(i):
-            neighbors = tree.query_radius(P[i].reshape(1, -1), r=radius)[0]
-            for f, gene_indices in feature_indices.items():
-                self.accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, i, f)
-                
-        for i in tqdm(range(len(self.relevant_indices)), desc="Computing Neighborhood Metagenes"):
-            process_cell(i)
 
-        neighborhood_metagenes = np.log1p(neighborhood_metagenes)
-        return neighborhood_metagenes
+        # Precompute neighbors list for all relevant cells
+        neighbors_list = tree.query_radius(P[self.relevant_indices], r=radius)
+
+        # Process each cell's neighborhood in parallel
+        def process_cell(i):
+            neighbors = neighbors_list[i]
+            metagenes_for_cell = np.zeros(len(feature_set.feature_sets), dtype=np.float64)
+            for f, gene_indices in feature_indices.items():
+                self.accumulate_metagenes(metagenes_for_cell, neighbors, G, gene_indices)
+            return metagenes_for_cell
+
+        # Collect results in parallel
+        results = Parallel(n_jobs=-1)(delayed(process_cell)(i) for i in tqdm(range(len(self.relevant_indices)), desc='Computing Neighborhood Metagenes'))
+
+        # Stack the results into the final matrix
+        neighborhood_metagenes = np.vstack(results)
+
+        # Apply log transformation to the metagenes matrix
+        return np.log1p(neighborhood_metagenes)
 
     def get_feature(self, **kwargs):
         """
@@ -445,9 +460,14 @@ class TranscriptSpace:
 
             resample_coefficients = []
 
-            Xs, ys = resample(X, y, n_samples=n_resamples*X.shape[0])
-            Xs = np.reshape(Xs, (n_resamples, X.shape[0], X.shape[1]))
-            ys = np.reshape(ys, (n_resamples, X.shape[0]))
+            resample_dim = kwargs.get('resample_dim', None)
+
+            if resample_dim is None:
+                resample_dim = X.shape[0]
+
+            Xs, ys = resample(X, y, n_samples=n_resamples*resample_dim)
+            Xs = np.reshape(Xs, (n_resamples, resample_dim, X.shape[1]))
+            ys = np.reshape(ys, (n_resamples, resample_dim))
 
             for r in range(n_resamples):
                 X = Xs[r]
@@ -456,7 +476,8 @@ class TranscriptSpace:
 
                 for retry in range(n_retries):
                     l = self.lambd * (2 ** retry)
-                    model = Lasso(alpha=l)
+                    #model = Lasso(alpha=l)
+                    model = LassoLars(alpha=l)
 
                     with warnings.catch_warnings():
                             warnings.filterwarnings('error')
@@ -1244,15 +1265,17 @@ if __name__ == "__main__":
     morans_i = stats['morans_I']
     indices = np.argsort(morans_i)[::-1][:250]
     genes = [stats['feature_names'][i] for i in indices]
-    st.filter_genes(filter_by_gene, genes=genes)
-    #cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
+    #st.filter_genes(filter_by_gene, genes=genes)
 
-    #ts = TranscriptSpace(st, [cell_type_abundance_feature], [1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
-    ts = TranscriptSpace(st, [], [], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
-    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=3)
-    np.savez('cancer2.npz', **coeffs)
+    cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
+    metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
 
-    coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.2)
+    ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)
+    #ts = TranscriptSpace(st, [], [], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
+    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=3, resample_dim=None)
+    np.savez('cancer1.npz', **coeffs)
+
+    coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.08)
     coeffiicent_analysis.plot_coefficient_graph()
     
 

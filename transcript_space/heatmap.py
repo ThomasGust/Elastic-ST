@@ -8,8 +8,8 @@ from scipy.stats import gaussian_kde
 import os
 
 if __name__ == "__main__":
-    coefficients = np.load('treg.npz')
-    analysis = CoefficientAnalysis(coefficients, 0.08)
+    coefficients = np.load('cancer1.npz')
+    analysis = CoefficientAnalysis(coefficients, 0.05)
     #analysis.plot_coefficient_graph()
 
     #print(analysis.gene_features)
@@ -25,12 +25,12 @@ if __name__ == "__main__":
     for meta in tqdm(analysis.gene_features):
         m  = meta.replace("/", "")
         #print(m)
-        path = f'tregs\\{m}.png'
+        path = f'figures\\cancer2\\{m}.png'
 
         if os.path.exists(path):
             continue
 
-        t = 'Treg'
+        t = 'epithelial.cancer.subtype_2'
         _i = np.where(st.T == st.celltype2idx[t])
 
 

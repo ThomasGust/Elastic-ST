@@ -17,17 +17,18 @@ import heapq
 import warnings
 
 class SpatialTranscriptomicsData:
-    """
-    This is the basic data object to hold spatial transriptomics data.
-
-    For TranscriptSpace, all data has a few key attributes:
-    - G: a numpy array of shape (n_cells, n_genes) containing the gene expression data
-    - P: a numpy array of shape (n_cells, 2) containing the spatiual coordinates of each cell
-    - T: a sparse numpy matrix of shape (n_cells, n_cell_types) containing the cell type information
-    - annotations: a dictionary with two lists of strings, 'cell_types' and 'gene_names'
-    """
 
     def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
+        """
+        This is the basic data object to hold spatial transriptomics data.
+
+        For TranscriptSpace, all data has a few key attributes:
+        - G: a numpy array of shape (n_cells, n_genes) containing the gene expression data
+        - P: a numpy array of shape (n_cells, 2) containing the spatiual coordinates of each cell
+        - T: a sparse numpy matrix of shape (n_cells, n_cell_types) containing the cell type information
+        - annotations: a dictionary with two lists of strings, 'cell_types' and 'gene_names'
+        """
+
         self.G = G
         self.P = P
         self.T = T
@@ -40,6 +41,14 @@ class SpatialTranscriptomicsData:
         self.map_dicts()
     
     def map_dicts(self):
+        """
+        Creates a mapping between cell types and indices, and gene names and indices based on the annotations.
+
+        Parameters:
+            None
+        Returns:
+            None
+        """
         self.celltype2idx = {cell_type: idx for idx, cell_type in enumerate(self.cell_types)}
         self.idx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.cell_types)}
 
@@ -47,27 +56,32 @@ class SpatialTranscriptomicsData:
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
 
     
-    def remap_metagenes(self, metagenes:list[tuple[str, list[str]]]):
+    def remap_metagenes(self, metagenes: dict[str, list[str]], opfunc: callable = np.sum):
         """
-        Instead of having cellxgenes, the expression matrix G will now have cellxmetagenes. This is useful for reducing the dimensionality of the data and revealing better biological insights.
-        metagenes can either be a list of tuples of metagene names, and a list of gene names, or a list of tuples of metagene names, a list of gene names, and a list of weights.
-        """
+        Transforms the gene expression matrix to represent metagenes.
 
+        Parameters:
+            metagenes (dict): Dictionary with metagene names as keys and lists of gene names as values.
+            opfunc (callable): The operation to apply to the gene expression values for each metagene. Default is np.sum.
+        Returns:
+            None
+        """
+        
         new_G = np.zeros((self.G.shape[0], len(metagenes)))
-        metagene_names = []
+        metagene_names = list(metagenes.keys())
 
         normalized_G = self.G / np.sum(self.G, axis=1)[:, np.newaxis]
-        if len(list(metagenes[0])) == 2:
-            #No weights
-            for metagene in tqdm(metagenes):
-                metagene_name, gene_names = metagene
-                gene_indices = []
-                for gene in gene_names:
-                    if gene in self.gene2idx:
-                        gene_indices.append(self.gene2idx[gene])
-                new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices], axis=1)
-                metagene_names.append(metagene_name)
-
+        
+        # Significantly faster than using a list comprehension
+        gene_indices_dict = {
+            name: [self.gene2idx.get(gene) for gene in genes if gene in self.gene2idx]
+            for name, genes in metagenes.items()
+        }
+        
+        #Much faster than nested for loops, this is the step when metagene scores are finally computed
+        for idx, (metagene_name, gene_indices) in enumerate(gene_indices_dict.items()):
+            new_G[:, idx] = opfunc(normalized_G[:, gene_indices], axis=1) if gene_indices else 0
+        
         self.G = new_G
         self.gene_names = metagene_names
         self.map_dicts()

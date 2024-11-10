@@ -8,11 +8,47 @@ from scipy.stats import gaussian_kde
 from tqdm import tqdm
 
 
+def binarize_coefficients(a, thresh):
+    a[a <= thresh] = 0.0
+    a[np.where(a != 0.0)] = 1.0
+    return a
 if __name__ == "__main__":
-    coefficients = np.load('cancer1.npz')
-    analysis = CoefficientAnalysis(coefficients, 0.05)
-    analysis.plot_coefficient_graph()
     
+    coefficients = np.load('coefficients\\with_features\\macrophage.npz')
+    analysis = CoefficientAnalysis(coefficients, graph_threshold=0.06, norm=False)
+    deg = analysis.get_graph_degree()
+
+    deg = {k: v for k, v in sorted(deg.items(), key=lambda item: item[1])}
+    print(deg)
+    print(analysis.graph.edges('stromal.cell.type.4'))
+    """efgd
+    full_coefficients = np.load('coefficients\\with_features\\B-cell.npz')
+    full_coefficient_matrix = full_coefficients['coefficients']
+    full_coefficient_matrix = binarize_coefficients(full_coefficient_matrix, 0.00)
+
+    coefficients = np.load('coefficients\\no_features\\B-cell.npz')
+    coefficient_matrix = coefficients['coefficients']
+    coefficient_matrix = binarize_coefficients(coefficient_matrix, 0.00)
+    cm = np.zeros(full_coefficient_matrix.shape)
+
+    print(full_coefficient_matrix.shape[0]-coefficient_matrix.shape[0])
+    cm[full_coefficient_matrix.shape[0]-coefficient_matrix.shape[0]:] = coefficient_matrix
+    coefficient_matrix = cm
+    print(coefficient_matrix.shape, full_coefficient_matrix.shape)
+    
+
+    adjacency_comparison = np.zeros(full_coefficient_matrix.shape)
+    adjacency_comparison[np.where((full_coefficient_matrix == 0) & (coefficient_matrix == 0))] = 0
+    adjacency_comparison[np.where((full_coefficient_matrix == 0) & (coefficient_matrix != 0))] = -1
+    adjacency_comparison[np.where((full_coefficient_matrix != 0) & (coefficient_matrix == 0))] = 1
+    adjacency_comparison[np.where((full_coefficient_matrix != 0) & (coefficient_matrix != 0))] = 2
+
+    print(np.unique(adjacency_comparison))
+    
+    plt.figure(figsize=(16, 12))
+    plt.imshow(adjacency_comparison)
+    plt.show()
+"""
 """
 print(analysis.gene_features)
 #analysis.plot_coefficient_graph()

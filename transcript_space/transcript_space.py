@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.optimize import minimize
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils import resample
 import json as json
@@ -8,21 +7,14 @@ import pandas as pd
 from tqdm import tqdm
 from typing import Union
 import networkx as nx
-from scipy.spatial.distance import pdist, squareform, cdist
-from scipy.stats import multivariate_normal
-from sklearn.linear_model import Lasso, LassoLars
-#Get KDTree from sklearn
+from scipy.spatial.distance import pdist, squareform
+from sklearn.linear_model import LassoLars
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
-from sklearn.linear_model import ElasticNet
-from scipy.sparse import lil_matrix
 from scipy.spatial import cKDTree
 import json
-import numba
 import heapq
 import warnings
-from joblib import Parallel, delayed
-
 
 class SpatialTranscriptomicsData:
     """
@@ -32,15 +24,13 @@ class SpatialTranscriptomicsData:
     - G: a numpy array of shape (n_cells, n_genes) containing the gene expression data
     - P: a numpy array of shape (n_cells, 2) containing the spatiual coordinates of each cell
     - T: a sparse numpy matrix of shape (n_cells, n_cell_types) containing the cell type information
-    - cell_types: a list of cell type names
-    - gene_names: a list of gene names
+    - annotations: a dictionary with two lists of strings, 'cell_types' and 'gene_names'
     """
 
     def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
         self.G = G
         self.P = P
         self.T = T
-
 
         #Load annotations for cell types and gene names, needed for interpretability
         self.annotations = annotations
@@ -49,47 +39,15 @@ class SpatialTranscriptomicsData:
 
         self.map_dicts()
     
-    def threshold_G(self, by:callable):
-        """
-        Apply a thresholding function to the expression matrix G.
-        """
-        self.G = by(self.G)
-    
     def map_dicts(self):
         self.celltype2idx = {cell_type: idx for idx, cell_type in enumerate(self.cell_types)}
         self.idx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.cell_types)}
 
         self.gene2idx = {gene: idx for idx, gene in enumerate(self.gene_names)}
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
+
     
-    @staticmethod
-    def covariance_threshold(data, G, **kwargs):
-        threshold = kwargs.get('threshold', 0.5)
-        cell_type = kwargs.get('cell_type', None)
-
-        if cell_type is not None:
-            i = np.where(data.T == data.celltype2idx[cell_type])
-        else:
-            i = np.arange(data.G.shape[0])
-        
-        G = G[i]
-
-        #Get only the genes with the highest average covariance (If this gene changes, other genes are likely to change as well)
-        cov_matrix = np.cov(G, rowvar=False)
-        avg_cov = np.mean(cov_matrix, axis=0)
-        percentile = np.percentile(avg_cov, threshold * 100)
-        gene_indices = np.where(avg_cov > percentile)[0]
-
-        return gene_indices
-
-    def filter_genes(self, filter:callable, **kwargs):
-        gene_indices = filter(self, self.G, **kwargs)
-        self.G = self.G[:, gene_indices]
-        self.gene_names = [self.gene_names[idx] for idx in gene_indices]
-
-        self.map_dicts()
-    
-    def remap_metagenes(self, metagenes:Union[list[tuple[str, list[str]]], list[tuple[str, list[str], float]]]):
+    def remap_metagenes(self, metagenes:list[tuple[str, list[str]]]):
         """
         Instead of having cellxgenes, the expression matrix G will now have cellxmetagenes. This is useful for reducing the dimensionality of the data and revealing better biological insights.
         metagenes can either be a list of tuples of metagene names, and a list of gene names, or a list of tuples of metagene names, a list of gene names, and a list of weights.
@@ -103,7 +61,6 @@ class SpatialTranscriptomicsData:
             #No weights
             for metagene in tqdm(metagenes):
                 metagene_name, gene_names = metagene
-                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
                 gene_indices = []
                 for gene in gene_names:
                     if gene in self.gene2idx:
@@ -111,18 +68,6 @@ class SpatialTranscriptomicsData:
                 new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices], axis=1)
                 metagene_names.append(metagene_name)
 
-        elif len(list(metagenes[0])) == 3:
-            #Weights
-            for metagene in metagenes:
-                metagene_name, gene_names, weights = metagene
-                #gene_indices = [self.gene2idx[gene] for gene in gene_names]
-                gene_indices = []
-                for gene in gene_names:
-                    if gene in self.gene2idx:
-                        gene_indices.append(self.gene2idx[gene])
-                new_G[:, metagenes.index(metagene)] = np.sum(normalized_G[:, gene_indices] * weights, axis=1)
-                metagene_names.append(metagene_name)
-        
         self.G = new_G
         self.gene_names = metagene_names
         self.map_dicts()
@@ -271,103 +216,87 @@ class NeighborhoodAbundanceFeature(ModelFeature):
                     neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
 
-
-
 class NeighborhoodMetageneFeature(ModelFeature):
-    """Compute the neighborhood abundance of all the genes in a given feature set."""
-    
-    def __init__(self, data: SpatialTranscriptomicsData, feature_set: FeatureSetData):
+    """Compute the neighborhood abundance of all the genes in a given feature set"""
+    def __init__(self, data:SpatialTranscriptomicsData, feature_set:FeatureSetData):
         super().__init__("neighborhood_metagene")
+        """
+        Parameters:
+            data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
+            feature_set (FeatureSetData): Feature set data object.
+        """
+
         self.data = data
         self.feature_set = feature_set
 
     def compute_feature(self, **kwargs):
         """
-        Compute the neighborhood metagenes for the specified spatial transcriptomics data.
-        
+        This method currently works ok with numba optimization, but still takes about 12 minutes to run on the full dataset
         Parameters:
-            alpha (float): Regularization parameter, default is 1.0.
-            radius (float): Neighborhood radius, default is 0.1.
-            cell_type (str): Type of cell to filter by (optional).
+            alpha (float): Regularization parameter.
+            radius (float): Neighborhood radius.
         """
         self.G = self.data.G
         self.P = self.data.P
         self.T = self.data.T
+
         self.celltype2idx = self.data.celltype2idx
         self.idx2celltype = self.data.idx2celltype
 
-        # Set parameters
+        self.feature_set = self.feature_set
+
+        #Get alpha or else default to 1.0
         alpha = kwargs.get('alpha', 1.0)
         self.alpha = alpha
+
+        #Get the neighborhood radius
         radius = kwargs.get('radius', 0.1)
         self.radius = radius
 
-        # Filter by cell type if specified
         cell_type = kwargs.get('cell_type', None)
         if cell_type is not None:
-            indices = np.where(self.T == self.celltype2idx[cell_type])[0]
+            indices = np.where(self.T == self.celltype2idx[cell_type])
         else:
             indices = np.arange(self.G.shape[0])
-        self.relevant_indices = indices
+        self.relevant_indices = list(indices)[0]
+        #print(self.relevant_indices.shape)
 
-        # Compute neighborhood metagenes
-        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.feature_set, radius)
+        #Get the neighborhood abundances
+        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.T, self.feature_set, radius)
 
-        np.save('metagene_features.npy', self.neighborhood_metagenes)
+        self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
 
     @staticmethod
-    @numba.njit
-    def accumulate_metagenes(metagenes_for_cell, neighbors, G, gene_indices):
-        """
-        Accumulate metagenes for a cell by averaging gene expression values of neighboring cells.
-        """
+    #@numba.njit
+    def accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, cell_idx, feature_set_idx):
         if gene_indices.size > 0:
-            # Calculate mean expression of neighbors' genes and accumulate
-            metagenes_for_cell += np.mean(G[neighbors][:, gene_indices])
+            neighborhood_metagenes[cell_idx, feature_set_idx] += np.mean(G[neighbors][:, gene_indices])
 
-    def _compute_neighborhood_metagenes(self, G, P, feature_set, radius):
-        """
-        Core function to calculate neighborhood metagenes using a KDTree for neighbor searches.
-        
-        Parameters:
-            G (np.ndarray): Gene expression matrix.
-            P (np.ndarray): Spatial coordinates of the cells.
-            feature_set (FeatureSetData): Feature set data.
-            radius (float): Neighborhood radius for the KDTree.
-
-        Returns:
-            np.ndarray: Matrix of neighborhood metagenes.
-        """
-        # Initialize the output matrix
+    
+    def _compute_neighborhood_metagenes(self, G, P, T, feature_set, radius):
+        print(len(self.relevant_indices))
         neighborhood_metagenes = np.zeros((len(self.relevant_indices), len(feature_set.feature_sets)))
         tree = KDTree(P)
 
-        # Precompute gene indices for each feature set
+        # Precompute gene indices for each feature set to avoid repetitive lookup
         feature_indices = {
             f: np.array([self.data.gene2idx[gene] for gene in feature_set.featureset2genes[feature_set_name] if gene in self.data.gene2idx])
             for f, feature_set_name in enumerate(feature_set.feature_sets)
         }
 
-        # Precompute neighbors list for all relevant cells
+        # Batch processing to precompute neighbors list for all relevant cells
         neighbors_list = tree.query_radius(P[self.relevant_indices], r=radius)
 
-        # Process each cell's neighborhood in parallel
-        def process_cell(i):
-            neighbors = neighbors_list[i]
-            metagenes_for_cell = np.zeros(len(feature_set.feature_sets), dtype=np.float64)
+        # Process each cell in the batch using the precomputed neighbors list
+        for i, neighbors in enumerate(tqdm(neighbors_list, desc='Computing Neighborhood Metagenes')):
+            cell_idx = self.relevant_indices[i]
             for f, gene_indices in feature_indices.items():
-                self.accumulate_metagenes(metagenes_for_cell, neighbors, G, gene_indices)
-            return metagenes_for_cell
-
-        # Collect results in parallel
-        results = Parallel(n_jobs=-1)(delayed(process_cell)(i) for i in tqdm(range(len(self.relevant_indices)), desc='Computing Neighborhood Metagenes'))
-
-        # Stack the results into the final matrix
-        neighborhood_metagenes = np.vstack(results)
+                self.accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, i, f)
 
         # Apply log transformation to the metagenes matrix
-        return np.log1p(neighborhood_metagenes)
-
+        neighborhood_metagenes = np.log1p(neighborhood_metagenes)
+        return neighborhood_metagenes
+    
     def get_feature(self, **kwargs):
         """
         Parameters:
@@ -442,8 +371,15 @@ class TranscriptSpace:
             feature_matrices = list(feature_matrices)
 
             #With this feature scaling, everything is relative to gene expression
+
+            alpha_vector = []
             for f, feature_matrix in enumerate(feature_matrices):
                 feature_matrices[f] = feature_matrix * self.alphas[f]
+                index_shape = feature_matrix.shape[1]
+                for i in range(index_shape):
+                    alpha_vector.append(self.alphas[f])
+
+
 
             if include_expression:
                 expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
@@ -452,10 +388,18 @@ class TranscriptSpace:
             else:
                 X = np.concatenate(feature_matrices, axis=1)
             
+            feature_matrix_index_shape = expression_feature.shape[1]
+            for i in range(feature_matrix_index_shape):
+                alpha_vector.append(1.0)
+            
+            alpha_vector = np.array(alpha_vector)
+            
             y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
-
+            #print(alpha_vector)
             #Normalize X
-            X = StandardScaler().fit_transform(X)
+            X = StandardScaler().fit_transform(X) * alpha_vector
+
+
             y = StandardScaler().fit_transform(y.reshape(-1, 1)).flatten()
 
             resample_coefficients = []
@@ -491,8 +435,10 @@ class TranscriptSpace:
                                 convergence_warnings[gi, r, retry] = 1
                                 coeffs = np.zeros(X.shape[1])
                                 print(f"Warning for gene {gi}")
+                            except ValueError:
+                                coeffs = np.zeros(X.shape[1])
                             resample_coefficients.append(coeffs)
-        
+
             coeffs = np.mean(resample_coefficients, axis=0)
 
 
@@ -506,116 +452,111 @@ class TranscriptSpace:
         return coefficient_record
 
 class CoefficientAnalysis:
+    def __init__(self, coefficients:np.array, in_feature_names:Union[np.array, list[str]], out_feature_names:Union[np.array, list[str]], graph_threshold:float, norm:bool=True):
+        """
+        This module contains functions for visualizing and analyzing the coefficients of a collection of sparse linear models trained on spatial transcriptomics data.
 
-    def __init__(self, coefficient_matrix, graph_threshold):
-        self.coefficient_matrix = coefficient_matrix
+        Parameters:
+            coefficients (np.array): Coefficient matrix.
+            in_feature_names (Union[np.array, list[str]]): List of feature names for the input features.
+            out_feature_names (Union[np.array, list[str]]): List of feature names for the output features.
+            graph_threshold (float): Threshold for building the coefficient graph. Edges with weights below this threshold will be removed.
+            norm (bool): Whether or not to normalize the coefficients between 0 and 1 before building the graph.
+        """
 
+        self.coefficients = coefficients
+        self.in_feature_names = in_feature_names
+        self.out_feature_names = out_feature_names
+        self.graph_threshold = graph_threshold
+        self.norm = norm
+
+        if self.norm:
+            self.coefficients = (self.coefficients - np.min(self.coefficients)) / (np.max(self.coefficients)-np.min(self.coefficients))
+        else:
+            pass
+
+        #Construct a list of feature not in the output feature names so we can identify spatial features visually in the graph plots
         self.spatial_features = []
-
-        for i, in_feature in enumerate(self.coefficient_matrix["in_feature_names"]):
-            if in_feature not in self.coefficient_matrix["out_feature_names"]:
+        for in_feature in self.in_feature_names:
+            if in_feature not in self.out_feature_names:
                 self.spatial_features.append(in_feature)
-        
-        #print(self.spatial_features)
-        #self.zero_diagonal()
-        self.graph = self.build_coefficient_graph(graph_threshold)
 
-        self.gene_features = [feature for feature in self.coefficient_matrix["in_feature_names"] if feature not in self.spatial_features]
+        #And then make a list of the gene features, not all of these will actually be in the graph
+        self.gene_features = [feature for feature in self.in_feature_names if feature not in self.spatial_features]
+        
+        #Finally, make the graph object to represent the coefficients.
+        self.graph = self.build_coefficient_graph(graph_threshold)
     
-    def build_coefficient_graph(self, threshold: float):
+    def get_thresh_coefficients(self):
+        """
+        Threshold the coefficients matrix using the graph threshold for desired sparsity. All edges will either be 0 or 1.
+
+        Parameters:
+            None
+        Returns:
+            np.array: Thresholded coefficient matrix.
+        """
+        a = np.copy(self.coefficients)
+        a[a <= self.graph_threshold] = 0.0
+        a[np.where(a != 0.0)] = 1.0
+
+        return a
+        
+    def build_coefficient_graph(self, threshold:float):
+        """
+        Build a coefficient graph from the coefficient matrix.
+
+        Paramters:
+            threshold (float): Threshold for building the coefficient graph. Edges with weights below this threshold will be removed.
+        Returns:
+            nx.Graph: Coefficient graph.
+        """
         G = nx.Graph()
 
-        # Cache references to avoid repeated dictionary lookups
-        in_feature_names = np.array(self.coefficient_matrix["in_feature_names"])
-        out_feature_names = np.array(self.coefficient_matrix["out_feature_names"])
-        coefficients = self.coefficient_matrix["coefficients"]
-
-        # Create a mask for coefficients that exceed the threshold
-        mask = np.abs(coefficients) > threshold
-
-        # Extract the indices where the mask is True (i.e., weights above the threshold)
+        #An edge list is much more efficient than blind iteration
+        mask = np.abs(self.coefficients) > threshold
         rows, cols = np.where(mask)
-
-        # Extract the corresponding feature names and weights
         edge_list = [
-            (in_feature_names[i], out_feature_names[j], coefficients[i, j])
+            (self.in_feature_names[i], self.out_feature_names[j], self.coefficients[i, j])
             for i, j in zip(rows, cols)
         ]
 
-        # Add edges to the graph with the weight attribute
         G.add_weighted_edges_from(edge_list)
-
         return G
-    def graph_spatial_energy(self):
-        """
-        Try to assign directionality to the graph based on proximity to spatial features.
-        Directions will go from spatial features to non-spatial features. This function assigns 
-        a direction to each edge based on its nodes' proximity to spatial features and the weights of other edges.
-        """
-        distances = {node: float('inf') for node in self.graph.nodes}
-        visited = set()  # Track nodes that have been processed
-
-        # Set distance of source nodes to 0 and add them to the priority queue
-        priority_queue = []
-        for source in self.spatial_features:
-            if source in self.graph.nodes:
-                distances[source] = 0
-                heapq.heappush(priority_queue, (0, source))
-
-        progress_bar = tqdm(total=len(self.graph.nodes), desc="Computing Graph Spatial Energy", dynamic_ncols=True)
-
-        while priority_queue:
-            progress_bar.set_postfix(queue_size=len(priority_queue))
-            current_distance, current_node = heapq.heappop(priority_queue)
-
-            # Skip processing if this node is already visited
-            if current_node in visited:
-                continue
-
-            # Mark the node as visited once we finalize its shortest distance
-            visited.add(current_node)
-            progress_bar.update(1)
-
-            # Process neighbors of the current node
-            for neighbor in list(self.graph.neighbors(current_node)):
-                edge_weight = self.graph[current_node][neighbor]['weight']
-                new_distance = current_distance + edge_weight
-
-                # If a shorter path to neighbor is found, update it
-                if new_distance < distances[neighbor]:
-                    distances[neighbor] = new_distance
-                    heapq.heappush(priority_queue, (new_distance, neighbor))
-
-        progress_bar.close()
-
-        # Step 3: Create a directed graph with weighted directionality based on distance gradients
-        DG = nx.DiGraph()
-        for u, v in tqdm(list(self.graph.edges()), desc='Constructing New Edges'):
-            # Calculate distance gradient from u to v and v to u
-            if distances[u] < float('inf') and distances[v] < float('inf'):
-                distance_uv = distances[v] - distances[u]
-                distance_vu = distances[u] - distances[v]
-
-                if distance_uv < distance_vu:
-                    DG.add_edge(v, u, edge_weight=self.graph[u][v]['weight'], direction_confidence=distance_uv)
-                else:
-                    DG.add_edge(u, v, edge_weight=self.graph[u][v]['weight'], direction_confidence=distance_vu)
-            
-            #Also handle components disconnected from the gradient
-            else:
-                DG.add_edge(u, v, edge_weight=self.graph[u][v]['weight'], direction_confidence=0)
-                DG.add_edge(v, u, edge_weight=self.graph[u][v]['weight'], direction_confidence=0)
-
-        self.graph = DG
 
     def plot_coefficient_graph(self, **kwargs):
-        #Get the layout
-        layout = kwargs.get('layout', 'spring')
-        pos = nx.spring_layout(self.graph)
+        """
+        Draws the internal coefficient graph
 
-        #Do red for spatial features
-        node_colors = ['red' if node in self.spatial_features else 'blue' for node in self.graph.nodes]
-        nx.draw(self.graph, pos, with_labels=True, node_size=5, font_size=8, font_color='black', edge_color='black', node_color=node_colors, width=0.1)
+        Parameters:
+            layout (nx.layout): Layout for the graph.
+            multicolor (bool): Whether to color spatial features differently from gene features.
+            with_labels (bool): Whether to display node labels.
+            node_size (int): Size of the nodes.
+            font_size (int): Size of the node labels.
+            font_color (str): Color of the node labels.
+            edge_color (str): Color of the edges.
+            edge_width (float): Width of the edges.
+        Returns:
+            None
+        """
+
+        pos = kwargs.get('layout', nx.spring_layout(self.graph))
+        multicolor = kwargs.get('multicolor', False)
+        with_labels = kwargs.get('with_labels', True)
+        node_size = kwargs.get('node_size', 20)
+        font_size = kwargs.get('font_size', 8)
+        font_color = kwargs.get('font_color', 'black')
+        edge_color = kwargs.get('edge_color', 'black')
+        edge_width = kwargs.get('edge_width', 0.1)
+
+        if multicolor:
+
+            node_colors = ['red' if node in self.spatial_features else 'blue' for node in self.graph.nodes]
+        else:
+            node_colors = 'blue'
+        
+        nx.draw(self.graph, pos, with_labels=with_labels, node_size=node_size, font_size=font_size, font_color=font_color, edge_color=edge_color, node_color=node_colors, width=edge_width)
 
         plt.show()
     
@@ -758,6 +699,15 @@ class CoefficientAnalysis:
             dict: A dictionary with nodes as keys and maximum flow as values
         """
         return dict(nx.algorithms.flow.maximum_flow(self.graph))
+
+    def get_graph_degree(self):
+        """
+        An alias for graph.degree function. Works on the internal coefficient graph to find the degree of each node.
+        
+        Returns:
+            dict: A dictionary with nodes as keys and degree as values
+        """
+        return dict(self.graph.degree)
 
 class SpatialStatistics:
     """
@@ -1259,25 +1209,32 @@ if __name__ == "__main__":
     T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
 
-    st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
-    
-    stats = np.load('statistics.npz')
-    morans_i = stats['morans_I']
-    indices = np.argsort(morans_i)[::-1][:250]
-    genes = [stats['feature_names'][i] for i in indices]
-    #st.filter_genes(filter_by_gene, genes=genes)
+    for cell_type in annotations['cell_types']:
+        print(cell_type)
+        st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
+        
+        stats = np.load(f'sample_statistics\\{cell_type}_report.npz')
+        morans_i = stats['morans_I']
+        indices = np.argsort(morans_i)[::-1][:1000]
+        genes = [stats['feature_names'][i] for i in indices]
+        #st.filter_genes(filter_by_gene, genes=genes)
 
-    cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
-    metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
+        cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
+        metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
 
-    ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)
-    #ts = TranscriptSpace(st, [], [], cell_type='epithelial.cancer.subtype_2', lambd=1e-2)
-    coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=3, resample_dim=None)
-    np.savez('cancer1.npz', **coeffs)
+        #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)
+        #ts = TranscriptSpace(st, [cell_type_abundance_feature], [1.0], cell_type='epithelial.cancer.subtype_1', lambd=1e-2*5)
+        ts = TranscriptSpace(st, [], [], cell_type=cell_type, lambd=1e-2)
+        coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=6, resample_dim=3000)
+        np.savez(f'coefficients\\no_features\\{cell_type}.npz', **coeffs)
 
-    coeffiicent_analysis = CoefficientAnalysis(coeffs, graph_threshold=0.08)
-    coeffiicent_analysis.plot_coefficient_graph()
-    
+        ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0, 1.0], cell_type=cell_type, lambd=1e-2)
+        coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=6, resample_dim=3000)
+        np.savez(f'coefficients\\with_features\\{cell_type}.npz', **coeffs)
+
+        print()
+        print()
+        
 
 #Vignettes to use later
 """

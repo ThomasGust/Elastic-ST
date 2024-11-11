@@ -8,16 +8,18 @@ from tqdm import tqdm
 from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform
-from sklearn.linear_model import LassoLarsCV
+from sklearn.linear_model import LassoLarsCV, LassoCV, Lasso, LassoLars
+from sklearn.covariance import GraphicalLasso, LedoitWolf
 from sklearn.neighbors import KDTree
+from sklearn.feature_selection import SelectKBest, mutual_info_regression, f_regression
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 import json
-import heapq
+from sklearn.exceptions import ConvergenceWarning
 import warnings
 
 class FeatureSetData:
-    def __init__(self, featureset2genes:Union[dict, None], path:Union[str, None]=None, bin_key:str='+'):
+    def __init__(self, featureset2genes:Union[dict, None]=None, path:Union[str, None]=None, bin_key:Union[str, None]='+'):
         """
         Object for holding metagenes as sets of genes. This can either be instantiated with a dict or a path to a CSV file and a bin_key to specify the binarization value.
 
@@ -368,7 +370,8 @@ class NeighborhoodMetageneFeature(ModelFeature):
         self.feature_set = self.feature_set
 
         if self.cell_type is not None:
-            indices = np.where(self.T == self.celltype2idx[self.cell_type])
+            #indices = np.where(self.T == self.celltype2idx[self.cell_type])
+            indices = np.where(self.T == self.cell_type)
         else:
             indices = np.arange(self.G.shape[0])
         
@@ -438,33 +441,30 @@ def flatten_list(l):
 
 class TranscriptSpace:
 
-    def __init__(self, st, in_features:list[ModelFeature], alphas:list, lambd:float=1e-3, cell_type='epithelial.cancer.subtype_1'):
-        """
-        Parameters:
-            in_features (list): List of input features. Other than gene expression, which is handled automatically.
-            alphas (list): Including different alphas in the ElasticNet model is too slow, these alphas are just a constant multiplier for each feature matrix
-            labmd (float): Regularization parameter for the ElasticNet model.
-        """
+    def __init__(self, st, in_features:list[ModelFeature], lambd:float=1e-3, cell_type='epithelial.cancer.subtype_1'):
         self.st = st
         self.in_features = in_features
         self.cell_type = cell_type
 
-        self.lambd = lambd
-
         for feature in self.in_features:
             feature.compute_feature(cell_type=cell_type)
-    
-        self.alphas = alphas
         
-    def fit(self, include_expression, filter, **kwargs):
-
-        self.gene_expression = GeneExpressionFeature(self.st, self.cell_type)
-        if filter is not None:
-            self.st.filter_genes(filter, **kwargs)
-    
+        self.lambd = lambd
+        
+    def fit(self, **kwargs):
         n_resamples = kwargs.get('n_resamples', None)
         n_retries = kwargs.get('n_retries', 10)
         resample_dim = kwargs.get('resample_dim', None)
+        k_best = kwargs.get('k_best', 100)
+        filter = kwargs.get('filter', None)
+        include_expression = kwargs.get('include_expression', True)
+
+        self.gene_expression = GeneExpressionFeature(self.st, self.cell_type)
+        if filter is not None:
+            indices = filter(self.st, **kwargs)
+            self.st.G = self.st.G[:, indices]
+            self.st.gene_names = [self.st.gene_names[i] for i in indices]
+            self.st.map_dicts()
         
         #Get the feature dimension of each feature matrix
         if include_expression:
@@ -506,12 +506,13 @@ class TranscriptSpace:
             y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
             y = StandardScaler().fit_transform(y.reshape(-1, 1)).flatten() # Standardize the output feature
 
-            #We should be able to use LassoLarsCV here instead of the mess below
+            selector = SelectKBest(score_func=f_regression, k=min(k_best, X.shape[1]))
+            selector.fit(X, y)
+            selected_indices = selector.get_support(indices=True)
+            
+            _X = X
+            X = _X[:, selected_indices]
 
-            model = LassoLarsCV(cv=n_resamples, n_jobs=-1, max_n_alphas=n_retries)
-            model.fit(X, y)
-            coeffs = model.coef_
-            """
             resample_coefficients = []
             if resample_dim is None:
                 resample_dim = X.shape[0]
@@ -520,35 +521,30 @@ class TranscriptSpace:
             Xs = np.reshape(Xs, (n_resamples, resample_dim, X.shape[1]))
             ys = np.reshape(ys, (n_resamples, resample_dim))
 
+
             for r in range(n_resamples):
                 X = Xs[r]
                 y = ys[r]
                 
+                model = Lasso(alpha=self.lambd)
 
-                for retry in range(n_retries):
-                    l = self.lambd * (2 ** retry)
-                    #model = Lasso(alpha=l)
-                    model = LassoLars(alpha=l)
+                with warnings.catch_warnings():
+                        warnings.filterwarnings('error')
 
-                    with warnings.catch_warnings():
-                            warnings.filterwarnings('error')
-
-                            try:
-                                model.fit(X, y)
-                                coeffs = model.coef_
-                                resample_coefficients.append(coeffs)
-                                break
-                            except Warning:
-                                convergence_warnings[gi, r, retry] = 1
-                                coeffs = np.zeros(X.shape[1])
-                                print(f"Warning for gene {gi}")
-                            except ValueError:
-                                coeffs = np.zeros(X.shape[1])
+                        try:
+                            model.fit(X, y)
+                            coeffs = model.coef_
                             resample_coefficients.append(coeffs)
+                            break
+                        except ValueError:
+                            coeffs = np.zeros(X.shape[1])
+                        resample_coefficients.append(coeffs)
 
             coeffs = np.mean(resample_coefficients, axis=0)
-            """
-
+            new_coeffs = np.zeros(indim)
+            new_coeffs[selected_indices] = coeffs
+            coeffs = new_coeffs
+            coeffs[np.abs(coeffs) < 1e-4] = 0
 
             if include_expression:
                 gi_idx = in_feature_names.index(self.st.idx2gene[gi])
@@ -634,7 +630,7 @@ class CoefficientAnalysis:
 
     def plot_coefficient_graph(self, **kwargs):
         """
-        Draws the internal coefficient graph
+        Draws the internal coefficient graph to the users screen.
 
         Parameters:
             layout (nx.layout): Layout for the graph.
@@ -1301,16 +1297,18 @@ class SpatialStatistics:
 
 #I may need to redo a lot of the changes I made earlier today, something in this file got messed up when I merged the changes from both computers
 
-def filter_by_gene(data, G, **kwargs):
+def filter_by_gene(data, **kwargs):
     """
     Filters the data by genes
     """
     genes = kwargs.get('genes', [])
     gene_indices = [data.gene2idx[gene] for gene in genes]
+    
+
     return gene_indices
 
 if __name__ == "__main__":
-    feature_sets = FeatureSetData('cancer_annotations.csv', bin_key="+")
+    feature_sets = FeatureSetData(path='cancer_annotations.csv', bin_key='+')
     
     G = np.load('data\\colon_cancer\\colon_cancer_G.npy')
     P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
@@ -1318,27 +1316,30 @@ if __name__ == "__main__":
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
 
     for cell_type in annotations['cell_types']:
+        #cell_type = 'T CD8 memory'
         print(cell_type)
         st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
         
         stats = np.load(f'sample_statistics\\{cell_type}_report.npz')
         morans_i = stats['morans_I']
-        indices = np.argsort(morans_i)[::-1][:1000]
+        indices = np.argsort(morans_i)[::-1][:2500]
         genes = [stats['feature_names'][i] for i in indices]
-        #st.filter_genes(filter_by_gene, genes=genes)
 
-        cell_type_abundance_feature = NeighborhoodAbundanceFeature(st)
-        metagene_feature = NeighborhoodMetageneFeature(st, feature_sets)
+
+        cell_type_abundance_feature = NeighborhoodAbundanceFeature(st, cell_type=cell_type, radius=0.1, alpha=1.5)
+        #metagene_feature = NeighborhoodMetageneFeature(st, feature_sets, cell_type=cell_type, radius=0.1, alpha=1.5)
 
         #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)
         #ts = TranscriptSpace(st, [cell_type_abundance_feature], [1.0], cell_type='epithelial.cancer.subtype_1', lambd=1e-2*5)
-        ts = TranscriptSpace(st, [], [], cell_type=cell_type, lambd=1e-2)
-        coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=6, resample_dim=3000)
-        np.savez(f'coefficients\\no_features\\{cell_type}.npz', **coeffs)
+        #ts = TranscriptSpace(st, [], [], cell_type=cell_type, lambd=1e-2)
+        #coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=6, resample_dim=3000)
+        #np.savez(f'coefficients\\no_features\\{cell_type}.npz', **coeffs)
 
-        ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0, 1.0], cell_type=cell_type, lambd=1e-2)
-        coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=6, resample_dim=3000)
-        np.savez(f'coefficients\\with_features\\{cell_type}.npz', **coeffs)
+        #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0, 1.0], cell_type=cell_type, lambd=1e-2)
+        ts = TranscriptSpace(st, [cell_type_abundance_feature], cell_type=cell_type, lambd=1e-1*2)
+        coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=1, n_retries=1000, resample_dim=3000, k_best=50)
+        #coeffs = ts.fit(radius=0.1, include_expression=True, n_resamples=5, n_retries=1000, resample_dim=3000)
+        np.savez(f'coefficients\\withc_features\\{cell_type}.npz', **coeffs)
 
         print()
         print()

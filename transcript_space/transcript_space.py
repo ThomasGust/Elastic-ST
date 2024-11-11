@@ -16,6 +16,56 @@ import json
 import heapq
 import warnings
 
+class FeatureSetData:
+    def __init__(self, featureset2genes:Union[dict, None], path:Union[str, None]=None, bin_key:str='+'):
+        """
+        Object for holding metagenes as sets of genes. This can either be instantiated with a dict or a path to a CSV file and a bin_key to specify the binarization value.
+
+        Parameters:
+            featureset2genes (dict): A dictionary with feature set names as keys and lists of gene names as values.
+            path (str): Path to a CSV file containing the feature set data. Feature set names should be in the first row and gene names in the first column.
+            bin_key (str): The value to use for binarization. (i.e. in the CSV file, all values equal to bin_key will be considered as part of the feature set).
+        """
+        self.path = path
+        self.bin_key = bin_key
+        self.featureset2genes = featureset2genes
+
+        if path is not None:
+            if bin_key is None:
+                raise ValueError("bin_key must be specified if path is not None")
+        
+            self.annotations = pd.read_csv(path, index_col=0)
+            self.feature_sets = list(self.annotations.columns)
+            self.gene_names = list(self.annotations.index)
+
+            self.featureset2genes = {feature_set: list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)]) for feature_set in self.feature_sets}
+        else:
+            self.feature_sets = list(self.featureset2genes.keys())
+            self.gene_names = list(set([gene for genes in self.featureset2genes.values() for gene in genes]))
+
+
+    def get_genes_in_feature_set(self, feature_set:str):
+        """
+        Get all the genes present in a given feature set.
+
+        Parameters:
+            feature_set (str): The name of the feature set.
+        Returns:
+            list: List of gene names in the feature set.
+        """
+        return list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)])
+    
+    def get_feature_sets_for_gene(self, gene:str):
+        """
+        Get all the feature sets that contain a given gene.
+
+        Parameters:
+            gene (str): The name of the gene.
+        Returns:
+            list: List of feature set names containing the gene.
+        """
+        return list(self.annotations.columns[np.where(self.annotations.loc[gene] == self.bin_key)])
+    
 class SpatialTranscriptomicsData:
 
     def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
@@ -56,59 +106,34 @@ class SpatialTranscriptomicsData:
         self.idx2gene = {idx: gene for idx, gene in enumerate(self.gene_names)}
 
     
-    def remap_metagenes(self, metagenes: dict[str, list[str]], opfunc: callable = np.sum):
+    def remap_metagenes(self, feature_set_data: FeatureSetData, opfunc: callable = np.sum):
         """
-        Transforms the gene expression matrix to represent metagenes.
+        Transforms the gene expression matrix to represent metagenes using a FeatureSetData object.
 
         Parameters:
-            metagenes (dict): Dictionary with metagene names as keys and lists of gene names as values.
+            feature_set_data (FeatureSetData): FeatureSetData object containing the metagenes and associated genes.
             opfunc (callable): The operation to apply to the gene expression values for each metagene. Default is np.sum.
         Returns:
             None
         """
-        
-        new_G = np.zeros((self.G.shape[0], len(metagenes)))
-        metagene_names = list(metagenes.keys())
-
+    
+        new_G = np.zeros((self.G.shape[0], len(feature_set_data.feature_sets)))
+        metagene_names = feature_set_data.feature_sets
         normalized_G = self.G / np.sum(self.G, axis=1)[:, np.newaxis]
         
-        # Significantly faster than using a list comprehension
+        #This kind of setup is much faster than using nested for loops
         gene_indices_dict = {
-            name: [self.gene2idx.get(gene) for gene in genes if gene in self.gene2idx]
-            for name, genes in metagenes.items()
+            feature_set: [self.gene2idx.get(gene) for gene in feature_set_data.get_genes_in_feature_set(feature_set)
+                          if gene in self.gene2idx]
+            for feature_set in metagene_names
         }
         
-        #Much faster than nested for loops, this is the step when metagene scores are finally computed
         for idx, (metagene_name, gene_indices) in enumerate(gene_indices_dict.items()):
             new_G[:, idx] = opfunc(normalized_G[:, gene_indices], axis=1) if gene_indices else 0
         
         self.G = new_G
         self.gene_names = metagene_names
         self.map_dicts()
-
-class FeatureSetData:
-    """
-    This represents a functional annotation object.
-    It holds a sparse matrix showing which genes are in which feature set.
-    Essentially used to capture metagenes.
-    """
-
-    def __init__(self, path:str, bin_key="+"):
-        self.path = path
-        self.bin_key = bin_key
-
-        self.annotations = pd.read_csv(path, index_col=0)
-        self.feature_sets = list(self.annotations.columns)
-        self.gene_names = list(self.annotations.index)
-
-        #Build a featureset2genes dict
-        self.featureset2genes = {feature_set: list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)]) for feature_set in self.feature_sets}
-
-    def get_genes_in_feature_set(self, feature_set:str):
-        return list(self.annotations.index[np.where(self.annotations[feature_set] == self.bin_key)])
-    
-    def get_feature_sets_for_gene(self, gene:str):
-        return list(self.annotations.columns[np.where(self.annotations.loc[gene] == self.bin_key)])
 
 class ModelFeature:
 

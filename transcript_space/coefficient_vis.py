@@ -14,13 +14,14 @@ def binarize_coefficients(a, thresh):
     return a
 if __name__ == "__main__":
     
-    coefficients = np.load('coefficients\\with_features\\macrophage.npz')
-    analysis = CoefficientAnalysis(coefficients, graph_threshold=0.06, norm=False)
+    coefficients = np.load('coefficients\\with_features\\mast.npz')
+    analysis = CoefficientAnalysis(coefficients['coefficients'], coefficients['in_feature_names'], coefficients['out_feature_names'], graph_threshold=0.1, norm=False)
     deg = analysis.get_graph_degree()
 
     deg = {k: v for k, v in sorted(deg.items(), key=lambda item: item[1])}
     print(deg)
-    print(analysis.graph.edges('stromal.cell.type.4'))
+    print(analysis.graph.edges('epithelial.cancer.subtype_2'))
+    analysis.plot_coefficient_graph(multicolor=True)
     """efgd
     full_coefficients = np.load('coefficients\\with_features\\B-cell.npz')
     full_coefficient_matrix = full_coefficients['coefficients']

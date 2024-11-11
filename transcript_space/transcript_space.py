@@ -8,7 +8,7 @@ from tqdm import tqdm
 from typing import Union
 import networkx as nx
 from scipy.spatial.distance import pdist, squareform
-from sklearn.linear_model import LassoLars
+from sklearn.linear_model import LassoLarsCV
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
@@ -138,17 +138,42 @@ class SpatialTranscriptomicsData:
 class ModelFeature:
 
     def __init__(self, name):
+        """
+        Base class for all different features that can be used in the TranscriptSpace model.
+        All user made features should inherit from this class and implement the compute_feature and get_feature methods.
+        Parameters:
+            name (str): The name of the feature.
+        """
         self.name = name
 
     def compute_feature(self, **kwargs):
+        """
+        This method should be implemented in all subclasses. It should compute the feature matrix and any other necessary data for the feature.
+        """
         raise NotImplementedError
 
     def get_feature(self, **kwargs):
+        """
+        This method should be implemented in all subclasses. It should return the feature matrix
+        """
+        raise NotImplementedError
+
+    def get_feature_names(self, **kwargs):
+        """
+        Get the names of the features in the feature matrix.
+        """
         raise NotImplementedError
 
 class GeneExpressionFeature(ModelFeature):
 
     def __init__(self, data:SpatialTranscriptomicsData, t:Union[str, int, None]):
+        """
+        This feature is a model compatible representation of the gene expression data in the SpatialTranscriptomicsData object.
+
+        Parameters:
+            data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
+            t (Union[str, int, None]): The cell type to extract gene expression data for. If None, all cell types are included.
+        """
         super().__init__("gene_expression")
 
         self.data = data
@@ -161,112 +186,170 @@ class GeneExpressionFeature(ModelFeature):
         
         i = np.where(self.data.T == self.t)
         self.G = self.data.G[i]
+        self.G = StandardScaler().fit_transform(self.G)
     
     def compute_feature(self, **kwargs):
-        self.gene2idx = self.data.gene2idx
-        #Get alpha or else default to 1.0
-        self.alpha = kwargs.get('alpha', 1.0)
+        """
+        Nothing needs to happen here because the feature is already computed in the __init__ method as it is stolen from the SpatialTranscriptomicsData object.
+        """
+        pass
 
     def get_feature(self, **kwargs):
-        #We may want to only use a subset of genes
+        """
+        Get the feature matrix for the gene expression data for each different configuration.
+
+        Parameters:
+            genes (list): List of gene names to include in the feature matrix. Passed as a keyword argument. Default is all genes.
+            exclude_genes (list): List of gene names to exclude from the feature matrix. Passed as a keyword argument. Default is an empty list.
+        """
+
+        #Includes functionality for excluding genes when this is used as an input feature
         genes = kwargs.get('genes', self.data.gene_names)
-        #Or exclude a list
         exclude_genes = kwargs.get('exclude_genes', [])
 
         genes = [gene for gene in genes if gene not in exclude_genes]
         gene_indices = [self.data.gene2idx[gene] for gene in genes]
 
-        #Return the gene expression data and the gene names alongside the alpha vector
-        return self.G[:, gene_indices], {idx: gene for idx, gene in enumerate(genes)}, [None] * len(genes)
+        return self.G[:, gene_indices]
+
+    def get_feature_names(self, **kwargs):
+        """
+        Get the names of the genes in the filtered feature matrix
+
+        Parameters:
+            genes (list): List of gene names to include in the feature matrix. Passed as a keyword argument. Default is all genes.
+            exclude_genes (list): List of gene names to exclude from the feature matrix. Passed as a keyword argument. Default is an empty list.
+        """
+        genes = kwargs.get('genes', self.data.gene_names)
+        exclude_genes = kwargs.get('exclude_genes', [])
+        return [gene for gene in genes if gene not in exclude_genes]
+    
 
 class NeighborhoodAbundanceFeature(ModelFeature):
     
-        def __init__(self, data:SpatialTranscriptomicsData):
+        def __init__(self, data:SpatialTranscriptomicsData, cell_type:Union[str, int, None]=None, radius:float=0.1, alpha:float=1.0):
+            """
+            Feature to compute the neighborhood cell type abundances for a given cell type. For each cell of the cell type, it will count the number of cells of each type surrounding that cell.
+
+            Parameters:
+                data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
+                cell_type (Union[str, int, None]): The cell type to compute neighborhood abundances for. If None, all cell types are included.
+                radius (float): The radius of the neighborhood to consider.
+                alpha (float): Regularization parameter.
+            """
             super().__init__("neighborhood_abundance")
-    
+
             self.data = data
+
+            if cell_type is not None:
+                if isinstance(cell_type, str):
+                    self.cell_type = self.data.celltype2idx[cell_type]
+                else:
+                    self.cell_type = cell_type
+            else:
+                self.cell_type = None
+            
+            self.radius = radius
+            self.alpha = alpha
         
         def compute_feature(self, **kwargs):
+            """
+            Builds the neighborhood abundance matrix to be used by the model. This is a matrix of shape (n_cells, n_cell_types) where each row is the neighborhood abundance of each cell type for a given cell.
 
-            cell_type = kwargs.get('cell_type', None)
+            Parameters:
+                None
+            Returns:
+                None
+            """
+            
             self.G = self.data.G
             self.P = self.data.P
             self.T = self.data.T
-
-            print(f"The shape of G is {self.G.shape}")
-            print(f"The shape of P is {self.P.shape}")
-            print(f"The shape of T is {self.T.shape}")
     
             self.celltype2idx = self.data.celltype2idx
             self.idx2celltype = self.data.idx2celltype
-    
-            #Get alpha or else default to 1.0
-            alpha = kwargs.get('alpha', 1.0)
-            self.alpha = alpha
-    
-            #Get the neighborhood radius
-            radius = kwargs.get('radius', 0.1)
-            self.radius = radius
 
-            
-            #Get the neighborhood abundances
-            #if not os.path.exists('neighborhood_abundances.npy'):
-            cell_type = kwargs.get('cell_type', None)
             if cell_type is not None:
                 cell_type_idx = self.celltype2idx[cell_type]
                 indices = np.where(self.T == cell_type_idx)
             
             self.relevant_indices = list(indices)[0]
-            self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T, radius)
-            """
-            else:
-                self.neighborhood_abundances = np.load('neighborhood_abundances.npy')
-
-            #Save the neighborhood abundances to a npy file
-            np.save('neighborhood_abundances.npy', self.neighborhood_abundances)
-            """
+            self.neighborhood_abundances = self._compute_neighborhood_abundances(self.G, self.P, self.T)
 
             self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
             
-            self.neighborhood_abundances = np.log1p(self.neighborhood_abundances)
+            self.neighborhood_abundances = StandardScaler().fit_transform(self.neighborhood_abundances) * self.alpha
+        
+        def get_feature_names(self, **kwargs):
+            """
+            Fetch the names of the cell types in the feature matrix.
+            """
+            return list(self.idx2celltype.values())
         
         def get_feature(self, **kwargs):
-            return self.neighborhood_abundances, self.data.idx2celltype, [self.alpha] * self.neighborhood_abundances.shape[1]
+            """
+            This is static, the neighborhood abundances will not actually change because this is always an output feature.
+            In the future, it might be cool to eventually let users play with this as an input feature as well, but I'm not sure if that makes sense biologically.
+            """
+            return self.neighborhood_abundances
 
-        def _compute_neighborhood_abundances(self, G, P, T, radius):
+        def _compute_neighborhood_abundances(self, G, P, T):
+            """
+            Internal method to compute the neighborhood abundances for each cell type.
+            Uses a KDTree to efficiently find the neighbors of each cell within a given radius.
+
+            Parameters:
+                G (np.array): Gene expression matrix.
+                P (np.array): Spatial coordinates matrix.
+                T (np.array): Cell type matrix.
+            Returns:
+                np.array: Neighborhood abundance matrix.
+            """
+
             n_cells = G.shape[0]
-            #Reshape T to be a 2d array from a 1d array of strings
+
+            #Reshape T to be a 2d array from a 1d array of strings. Sparsify.
             T_ = np.zeros((n_cells, len(self.celltype2idx)))
             for i in range(n_cells):
                 T_[i, T[i]] = 1
             
             T = T_
             n_cell_types = T.shape[1]
-
             neighborhood_abundances = np.zeros((len(self.relevant_indices), n_cell_types))
 
-            #Use a KDTree to find the nearest neighbors
+            #There may be a way to speed this up but the current technique usually runs in a few seconds for what I need it to do.
             tree = KDTree(P)
             for i, idx in enumerate(tqdm(self.relevant_indices, desc="Computing Neighborhood Abundances")):
-                
-                #Get the neighbors within the radius
-                neighbors = tree.query_radius(P[idx].reshape(1, -1), r=radius)[0]
+                neighbors = tree.query_radius(P[idx].reshape(1, -1), r=self.radius)[0]
                 for neighbor in neighbors:
                     neighborhood_abundances[i] += T[neighbor][0]
             return neighborhood_abundances
 
 class NeighborhoodMetageneFeature(ModelFeature):
     """Compute the neighborhood abundance of all the genes in a given feature set"""
-    def __init__(self, data:SpatialTranscriptomicsData, feature_set:FeatureSetData):
-        super().__init__("neighborhood_metagene")
+    def __init__(self, data:SpatialTranscriptomicsData, feature_set:FeatureSetData, alpha:float=1.0, radius:float=0.1, cell_type:Union[str, int, None]=None):
         """
         Parameters:
             data (SpatialTranscriptomicsData): Spatial transcriptomics data object.
             feature_set (FeatureSetData): Feature set data object.
         """
+        
+        super().__init__("neighborhood_metagene")
 
         self.data = data
         self.feature_set = feature_set
+
+        if cell_type is not None:
+            if isinstance(cell_type, str):
+                self.cell_type = self.data.celltype2idx[cell_type]
+            else:
+                self.cell_type = cell_type
+        else:
+            self.cell_type = None
+        
+        self.alpha = alpha
+        self.radius = radius
+
 
     def compute_feature(self, **kwargs):
         """
@@ -284,69 +367,75 @@ class NeighborhoodMetageneFeature(ModelFeature):
 
         self.feature_set = self.feature_set
 
-        #Get alpha or else default to 1.0
-        alpha = kwargs.get('alpha', 1.0)
-        self.alpha = alpha
-
-        #Get the neighborhood radius
-        radius = kwargs.get('radius', 0.1)
-        self.radius = radius
-
-        cell_type = kwargs.get('cell_type', None)
-        if cell_type is not None:
-            indices = np.where(self.T == self.celltype2idx[cell_type])
+        if self.cell_type is not None:
+            indices = np.where(self.T == self.celltype2idx[self.cell_type])
         else:
             indices = np.arange(self.G.shape[0])
+        
         self.relevant_indices = list(indices)[0]
-        #print(self.relevant_indices.shape)
 
-        #Get the neighborhood abundances
-        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.T, self.feature_set, radius)
+        self.neighborhood_metagenes = self._compute_neighborhood_metagenes(self.G, self.P, self.T)
 
         self.featureidx2celltype = {idx: cell_type for idx, cell_type in enumerate(self.idx2celltype)}
 
     @staticmethod
-    #@numba.njit
     def accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, cell_idx, feature_set_idx):
+        """
+        Internal method to accumulate the metagenes for each cell type. This is a static method to allow for potential parallelization in the future.
+        """
         if gene_indices.size > 0:
             neighborhood_metagenes[cell_idx, feature_set_idx] += np.mean(G[neighbors][:, gene_indices])
 
     
-    def _compute_neighborhood_metagenes(self, G, P, T, feature_set, radius):
-        print(len(self.relevant_indices))
-        neighborhood_metagenes = np.zeros((len(self.relevant_indices), len(feature_set.feature_sets)))
+    def _compute_neighborhood_metagenes(self, G, P, T):
+        """
+        Internal method to compute the neighborhood metagenes for each cell type. This feature always uses mean gene expression of each gene in the feature set for the metagene.
+
+        Parameters:
+            G (np.array): Gene expression matrix.
+            P (np.array): Spatial coordinates matrix.
+            T (np.array): Cell type matrix.
+        Returns:
+            np.array: Neighborhood metagene matrix. Standardized and multiplied by alpha.
+        """
+
+        neighborhood_metagenes = np.zeros((len(self.relevant_indices), len(self.feature_set.feature_sets)))
         tree = KDTree(P)
 
-        # Precompute gene indices for each feature set to avoid repetitive lookup
+        # Precompute gene indices for each feature set to avoid repetitive lookup, makes this method a lot faster
         feature_indices = {
-            f: np.array([self.data.gene2idx[gene] for gene in feature_set.featureset2genes[feature_set_name] if gene in self.data.gene2idx])
-            for f, feature_set_name in enumerate(feature_set.feature_sets)
+            f: np.array([self.data.gene2idx[gene] for gene in self.feature_set.featureset2genes[feature_set_name] if gene in self.data.gene2idx])
+            for f, feature_set_name in enumerate(self.feature_set.feature_sets)
         }
 
-        # Batch processing to precompute neighbors list for all relevant cells
-        neighbors_list = tree.query_radius(P[self.relevant_indices], r=radius)
+        # Batch processing to precompute neighbors list for all relevant cells, this is much faster than doing it in a loop
+        neighbors_list = tree.query_radius(P[self.relevant_indices], r=self.radius)
 
-        # Process each cell in the batch using the precomputed neighbors list
         for i, neighbors in enumerate(tqdm(neighbors_list, desc='Computing Neighborhood Metagenes')):
             cell_idx = self.relevant_indices[i]
             for f, gene_indices in feature_indices.items():
                 self.accumulate_metagenes(neighborhood_metagenes, neighbors, G, gene_indices, i, f)
 
-        # Apply log transformation to the metagenes matrix
-        neighborhood_metagenes = np.log1p(neighborhood_metagenes)
+        # Apply a standard scaler to the neighborhood metagenes
+        neighborhood_metagenes = StandardScaler().fit_transform(neighborhood_metagenes) * self.alpha
         return neighborhood_metagenes
     
     def get_feature(self, **kwargs):
         """
-        Parameters:
-            alpha (float): Regularization parameter.
-            radius (float): Neighborhood radius.
+        Gets the neighborhood metagene matrix, also static because this is always an output feature.
         """
-        return self.neighborhood_metagenes, {i:v for i, v in enumerate(self.feature_set.feature_sets)}, [self.alpha] * self.neighborhood_metagenes.shape[1]
+        return self.neighborhood_metagenes
+    
+    def get_feature_names(self, **kwargs):
+        """
+        Returns the names of the feature sets in the feature matrix.
+        """
+        return self.feature_set.feature_sets
 
 
 def flatten_list(l):
     return [item for sublist in l for item in sublist]
+
 class TranscriptSpace:
 
     def __init__(self, st, in_features:list[ModelFeature], alphas:list, lambd:float=1e-3, cell_type='epithelial.cancer.subtype_1'):
@@ -362,25 +451,26 @@ class TranscriptSpace:
 
         self.lambd = lambd
 
-        #Compute feature for every feature
         for feature in self.in_features:
             feature.compute_feature(cell_type=cell_type)
     
         self.alphas = alphas
         
     def fit(self, include_expression, filter, **kwargs):
+
         self.gene_expression = GeneExpressionFeature(self.st, self.cell_type)
         if filter is not None:
             self.st.filter_genes(filter, **kwargs)
     
         n_resamples = kwargs.get('n_resamples', None)
         n_retries = kwargs.get('n_retries', 10)
+        resample_dim = kwargs.get('resample_dim', None)
         
         #Get the feature dimension of each feature matrix
         if include_expression:
-            indim = (self.st.G.shape[1]-1)+sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+            indim = (self.st.G.shape[1]-1)+sum([feature.get_feature().shape[1] for feature in self.in_features])
         else:
-            indim = sum([feature.get_feature()[0].shape[1] for feature in self.in_features])
+            indim = sum([feature.get_feature().shape[1] for feature in self.in_features])
 
         outdim = self.st.G.shape[1]
 
@@ -391,60 +481,38 @@ class TranscriptSpace:
 
         #Unwrap the in_feature names
         if include_expression:
-            in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features]) + self.st.gene_names
+            in_feature_names = flatten_list([list(feature.get_feature_names()) for feature in self.in_features]) + self.st.gene_names
         else:
-            in_feature_names = flatten_list([list(feature.get_feature()[1].values()) for feature in self.in_features])
+            in_feature_names = flatten_list([list(feature.get_feature_names) for feature in self.in_features])
         out_feature_names = self.st.gene_names
 
         if n_resamples is not None:
             convergence_warnings = np.zeros((outdim, n_resamples, n_retries))
         else:
             convergence_warnings = np.zeros(outdim)
+        
         for gi in tqdm(range(outdim), f"Training Models For Cell Type {self.cell_type}"):
-            #TODO, I guess we don't even need the name dicts here because we are zeroing out the diagonal for self connections
             if len(self.in_features) != 0:
-                feature_matrices, feature_dicts, _ = zip(*[feature.get_feature(exclude_genes=[self.st.idx2gene[gi]]) for feature in self.in_features])
+                feature_matrices = [feature.get_feature() for feature in self.in_features]
             else:
-                feature_matrices, feature_dicts, _ = [], [], []
-            
-            feature_matrices = list(feature_matrices)
-
-            #With this feature scaling, everything is relative to gene expression
-
-            alpha_vector = []
-            for f, feature_matrix in enumerate(feature_matrices):
-                feature_matrices[f] = feature_matrix * self.alphas[f]
-                index_shape = feature_matrix.shape[1]
-                for i in range(index_shape):
-                    alpha_vector.append(self.alphas[f])
-
-
+                feature_matrices = [], [], []
 
             if include_expression:
-                expression_feature, expression_dict, _ = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
-                expression_feature = np.log1p(expression_feature)
+                expression_feature = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
                 X = np.concatenate([expression_feature] + list(feature_matrices), axis=1)
             else:
                 X = np.concatenate(feature_matrices, axis=1)
             
-            feature_matrix_index_shape = expression_feature.shape[1]
-            for i in range(feature_matrix_index_shape):
-                alpha_vector.append(1.0)
-            
-            alpha_vector = np.array(alpha_vector)
-            
             y = self.st.G[np.where(self.st.T == self.st.celltype2idx[self.cell_type])][:, gi]
-            #print(alpha_vector)
-            #Normalize X
-            X = StandardScaler().fit_transform(X) * alpha_vector
+            y = StandardScaler().fit_transform(y.reshape(-1, 1)).flatten() # Standardize the output feature
 
+            #We should be able to use LassoLarsCV here instead of the mess below
 
-            y = StandardScaler().fit_transform(y.reshape(-1, 1)).flatten()
-
+            model = LassoLarsCV(cv=n_resamples, n_jobs=-1, max_n_alphas=n_retries)
+            model.fit(X, y)
+            coeffs = model.coef_
+            """
             resample_coefficients = []
-
-            resample_dim = kwargs.get('resample_dim', None)
-
             if resample_dim is None:
                 resample_dim = X.shape[0]
 
@@ -455,7 +523,7 @@ class TranscriptSpace:
             for r in range(n_resamples):
                 X = Xs[r]
                 y = ys[r]
-
+                
 
                 for retry in range(n_retries):
                     l = self.lambd * (2 ** retry)
@@ -479,6 +547,7 @@ class TranscriptSpace:
                             resample_coefficients.append(coeffs)
 
             coeffs = np.mean(resample_coefficients, axis=0)
+            """
 
 
             if include_expression:

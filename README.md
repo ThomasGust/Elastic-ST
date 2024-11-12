@@ -64,3 +64,28 @@ if __name__ == "__main__":
    data = stl.SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_tpes=cell_types)
    print("Successfully Created SpatialTranscriptomicsData object")
 ```
+
+It can also be useful to load a feature set to use for a neighborhood metagene feature or to remap your SpatialTranscriptomicsData to metagenes (#TODO, make remapping compatible with the FeatureSetData module)
+The recommended form to hold a feature set is a pandas dataframe with Genes rows and Metagenes columns. #Todo, clean up FeatureSetDataModule to accept more data inputs and not load on the interior.
+
+```python
+import stlasso as stl
+import numpy as np
+import json
+
+if __name__ == "__main__":
+   G = np.load('data\\colon_cancer\\G.npy')
+   P = np.load('data\\colon_cancer\\P.npy')
+   T = np.load('data\\colon_cancer\\T.npy')
+   annotations = json.loads(open('data\\colon_cancer\\annotations.json'))
+
+   cell_types = annotations['cell_types']
+   gene_names = annotations['gene_names']
+
+   data = stl.SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_tpes=cell_types)
+   print("Successfully Created SpatialTranscriptomicsData object")
+
+   feature_set = stl.FeatureSetData(path='cancer_annotations.csv', bin_key='+')
+   print("Successfully Created FeatureSetData object")
+
+```

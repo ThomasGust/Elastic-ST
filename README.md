@@ -82,7 +82,7 @@ if __name__ == "__main__":
    cell_types = annotations['cell_types']
    gene_names = annotations['gene_names']
 
-   data = stl.SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_tpes=cell_types)
+   data = stl.SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_types=cell_types)
    print("Successfully Created SpatialTranscriptomicsData object")
 
    feature_set = stl.FeatureSetData(path='cancer_annotations.csv', bin_key='+')
@@ -94,4 +94,14 @@ if __name__ == "__main__":
 
 # core model, I still need to write docs for this obviously but I don't want to do that until it is absolutely finalized
 
+Once you have your data loaded, it can be useful to make spatial gradients plots if you have any particular genes of interest such as those below:
+<div>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/MMP11.png" alt="drawing" width="300"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/OLFM4.png" alt="drawing" width="300"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CD74.png" alt="drawing" width="300"/>
+</div>
+<div align='center'>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/S100A6.png" alt="drawing" width="300"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CEACAM6.png" alt="drawing" width="300"/>
+</div>
 

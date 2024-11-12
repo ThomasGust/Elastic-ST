@@ -43,3 +43,24 @@ We also allow users to 'remap' their raw transcript expression data to metagenes
 
 # Installation
 Leaving this blank for now, none of the libraries are super exotic so it should hopefully distribute really easily once it is up on Pypi.
+
+# Examples
+Firstly, how can we create data? Well, for STLasso, all data is initialized with 3 matrices, the (Cells, Genes) shape expression matrix G, the (Cells, Cell Types) shape cell type matrix T, and the (Cells, 2) shape position matrix P. Additionally, so we can understand the features, users must also provide a list 'cell_types', and a list 'gene_names' to initialize the SpatialTranscriptomicsData object. In code:
+
+```
+import st-lasso as stl
+import numpy as np
+import json
+
+if __name__ == "__main__":
+   G = np.load('data\\colon_cancer\\G.npy')
+   P = np.load('data\\colon_cancer\\P.npy')
+   T = np.load('data\\colon_cancer\\T.npy')
+   annotations = json.loads(open('data\\colon_cancer\\annotations.json'))
+
+   cell_types = annotations['cell_types']
+   gene_names = annotations['gene_names']
+
+   data = SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_tpes=cell_types)
+   print("Successfully Created SpatialTranscriptomicsData object")
+```

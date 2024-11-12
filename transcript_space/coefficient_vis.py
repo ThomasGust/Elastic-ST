@@ -12,6 +12,7 @@ def binarize_coefficients(a, thresh):
     a[a <= thresh] = 0.0
     a[np.where(a != 0.0)] = 1.0
     return a
+
 if __name__ == "__main__":
     
     coefficients = np.load('coefficients\\withc_features\\B-cell.npz')
@@ -22,7 +23,7 @@ if __name__ == "__main__":
     print(deg)
     print(analysis.graph.edges('epithelial.cancer.subtype_2'))
     analysis.plot_coefficient_graph(multicolor=True)
-    """efgd
+    """
     full_coefficients = np.load('coefficients\\with_features\\B-cell.npz')
     full_coefficient_matrix = full_coefficients['coefficients']
     full_coefficient_matrix = binarize_coefficients(full_coefficient_matrix, 0.00)

@@ -1,7 +1,7 @@
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from transcript_space import CoefficientAnalysis, SpatialTranscriptomicsData
+from st_lasso import CoefficientAnalysis, SpatialTranscriptomicsData
 import json
 import pandas as pd
 from scipy.stats import gaussian_kde

@@ -2,7 +2,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import json
-from transcript_space import SpatialTranscriptomicsData, SpatialStatistics
+from st_lasso import SpatialTranscriptomicsData, SpatialStatistics
 from sklearn.cluster import KMeans
 
 if __name__ == "__main__":

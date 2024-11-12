@@ -1,4 +1,4 @@
-from transcript_space import SpatialStatistics, SpatialTranscriptomicsData
+from st_lasso import SpatialStatistics, SpatialTranscriptomicsData
 import numpy as np
 import json
 

@@ -4,7 +4,7 @@ from dash.dependencies import Input, Output
 import plotly.express as px
 import pandas as pd
 import numpy as np
-from transcript_space import SpatialTranscriptomicsData
+from st_lasso import SpatialTranscriptomicsData
 
 #st = SpatialTranscriptomicsData(root_path='C:\\Users\\Thoma\\Documents\\GitHub\\TranscriptSpace\\data\\colon_cancer', name='colon_cancer')
 

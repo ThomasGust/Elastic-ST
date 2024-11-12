@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
-from transcript_space import CoefficientAnalysis, SpatialTranscriptomicsData
+from st_lasso import CoefficientAnalysis, SpatialTranscriptomicsData
 import json
 import pandas as pd
 from scipy.stats import gaussian_kde

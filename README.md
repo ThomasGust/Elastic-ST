@@ -88,4 +88,10 @@ if __name__ == "__main__":
    feature_set = stl.FeatureSetData(path='cancer_annotations.csv', bin_key='+')
    print("Successfully Created FeatureSetData object")
 
+   data.remap_metagenes(feature_set) # This currently doesn't work, as the remap_metagenes is messed up, yet another fix for code review.
+   print(data.gene_names)
 ```
+
+# core model, I still need to write docs for this obviously but I don't want to do that until it is absolutely finalized
+
+

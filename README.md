@@ -96,12 +96,12 @@ if __name__ == "__main__":
 
 Once you have your data loaded, it can be useful to make spatial gradients plots if you have any particular genes of interest such as those below:
 <div>
-<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/MMP11.png" alt="drawing" width="300"/>
-<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/OLFM4.png" alt="drawing" width="300"/>
-<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CD74.png" alt="drawing" width="300"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/MMP11.png" alt="drawing" width="200"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/OLFM4.png" alt="drawing" width="200"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CD74.png" alt="drawing" width="200"/>
 </div>
 <div align='center'>
-<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/S100A6.png" alt="drawing" width="300"/>
-<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CEACAM6.png" alt="drawing" width="300"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/S100A6.png" alt="drawing" width="200"/>
+<img src="https://github.com/ThomasGust/STLasso/blob/main/figs/CEACAM6.png" alt="drawing" width="200"/>
 </div>
 

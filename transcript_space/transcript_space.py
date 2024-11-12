@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 import json
 from sklearn.exceptions import ConvergenceWarning
+from scipy.stats import gaussian_kde
 import warnings
 
 class FeatureSetData:
@@ -1307,6 +1308,32 @@ def filter_by_gene(data, **kwargs):
 
     return gene_indices
 
+def get_gaussian_kde_values(x, y, expression, bandwidth=0.3):
+    """
+    Smooths the expression values using a Gaussian KDE. Better than a scatter plot for visually analyzing spatial patterns.
+    Plot with a simple plt.imshow to analyze.
+
+    Parameters:
+        x (np.array): X coordinates.
+        y (np.array): Y coordinates.
+        expression (np.array): Expression values.
+        bandwidth (float): Bandwidth of the KDE.
+    
+    Returns:
+        np.array: KDE values.
+    """
+    data = pd.DataFrame({'x': x, 'y': y, 'expression': expression})
+    x_grid, y_grid = np.mgrid[0:5:100j, 0:5:100j]
+    grid_positions = np.vstack([x_grid.ravel(), y_grid.ravel()])
+
+    # Use KDE with weighted expression levels to create a smooth gradient
+    values = np.vstack([data['x'], data['y']])
+    expression = data['expression']
+    kde = gaussian_kde(values, weights=expression, bw_method=bandwidth)  # Adjust bandwidth for smoothness
+    kde_values = kde(grid_positions).reshape(x_grid.shape)
+
+    return kde_values
+
 if __name__ == "__main__":
     feature_sets = FeatureSetData(path='cancer_annotations.csv', bin_key='+')
     
@@ -1326,7 +1353,7 @@ if __name__ == "__main__":
         genes = [stats['feature_names'][i] for i in indices]
 
 
-        cell_type_abundance_feature = NeighborhoodAbundanceFeature(st, cell_type=cell_type, radius=0.1, alpha=1.5)
+        cell_type_abundance_feature = NeighborhoodAbundanceFeature(st, cell_type=cell_type, radius=0.1, alpha=1)
         #metagene_feature = NeighborhoodMetageneFeature(st, feature_sets, cell_type=cell_type, radius=0.1, alpha=1.5)
 
         #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)

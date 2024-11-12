@@ -59,7 +59,6 @@ if __name__ == "__main__":
         plt.figure(figsize=(8, 6))
         plt.imshow(kde_values, extent=(0, 5, 0, 5), origin='lower', cmap='viridis', alpha=0.8)
         plt.colorbar(label=f'Gene Expression Level')
-        #plt.scatter(data['x'], data['y'], c=data['expression'], cmap='viridis', edgecolor='white', s=50)
         plt.title(f"Spatial Gradient of Gene Expression for {meta} in {t}")
         plt.xlabel("X Coordinate")
         plt.ylabel("Y Coordinate")

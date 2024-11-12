@@ -9,7 +9,7 @@ import os
 
 if __name__ == "__main__":
     coefficients = np.load('cancer1.npz')
-    analysis = CoefficientAnalysis(coefficients, 0.05)
+    analysis = CoefficientAnalysis(coefficients['coefficients'], coefficients['in_feature_names'], coefficients['out_feature_names'], graph_threshold=0.05, norm=False)
     #analysis.plot_coefficient_graph()
 
     #print(analysis.gene_features)
@@ -19,13 +19,13 @@ if __name__ == "__main__":
     P = np.load('data\\colon_cancer\\colon_cancer_P.npy')
     T = np.load('data\\colon_cancer\\colon_cancer_T.npy')
     annotations = json.loads(open('data\\colon_cancer\\colon_cancer_annotation.json').read())
-    st = SpatialTranscriptomicsData(G, P, T,annotations=annotations)
+    st = SpatialTranscriptomicsData(G, P, T, cell_types=annotations['cell_types'], gene_names=annotations['gene_names'])
 
 
     for meta in tqdm(analysis.gene_features):
         m  = meta.replace("/", "")
         #print(m)
-        path = f'figures\\cancer2\\{m}.png'
+        path = f'figures\\{m}.png'
 
         if os.path.exists(path):
             continue

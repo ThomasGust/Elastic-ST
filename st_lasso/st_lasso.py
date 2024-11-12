@@ -71,7 +71,7 @@ class FeatureSetData:
     
 class SpatialTranscriptomicsData:
 
-    def __init__(self, G:np.array, P:np.array, T:np.array, annotations:dict):
+    def __init__(self, G:np.array, P:np.array, T:np.array, cell_types:list[str]=None, gene_names:list[str]=None, annotations:dict=None):
         """
         This is the basic data object to hold spatial transriptomics data.
 
@@ -87,9 +87,8 @@ class SpatialTranscriptomicsData:
         self.T = T
 
         #Load annotations for cell types and gene names, needed for interpretability
-        self.annotations = annotations
-        self.cell_types = self.annotations['cell_types']
-        self.gene_names = self.annotations['gene_names']
+        self.cell_types = cell_types
+        self.gene_names = gene_names
 
         self.map_dicts()
     
@@ -1345,7 +1344,7 @@ if __name__ == "__main__":
     for cell_type in annotations['cell_types']:
         #cell_type = 'T CD8 memory'
         print(cell_type)
-        st = SpatialTranscriptomicsData(G, P, T, annotations=annotations)
+        st = SpatialTranscriptomicsData(G, P, T, gene_names=annotations['gene_names'], cell_types=annotations['cell_types'])
         
         stats = np.load(f'sample_statistics\\{cell_type}_report.npz')
         morans_i = stats['morans_I']

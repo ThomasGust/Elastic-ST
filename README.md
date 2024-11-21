@@ -1,5 +1,6 @@
 # STLasso
-A python data science library to create sparse coefficient matrices from spatial transcriptomics data.
+STLasso gives scientists the ability to discover more about their spatial transcriptomics data by learning how environmental features impact cell expression.
+STLasso trains sparse linear models (lasso's by default) to predict cellular gene expression from the rest of a cell's transcriptome, and features expressed in the environment.
 
 # Features
 ### Examples of how to use STLasso can be further found below but here is a synopsis of the features currently provided:

@@ -1,9 +1,9 @@
 # STLasso
 STLasso gives scientists the ability to discover more about their spatial transcriptomics data by learning how environmental features impact cell expression.
 STLasso trains sparse linear models (lasso's by default) to predict cellular gene expression from the rest of a cell's transcriptome, and features expressed in the environment.
-
+This creates a connectivity matrix representing a 'gene network' for a cell population, and how that gene network is affected by environmental features, like nearby abundance of a cell type or strong expression of a metagene in a given neighborhood.
 # Features
-### Examples of how to use STLasso can be further found below but here is a synopsis of the features currently provided:
+### Examples of how to use STLasso can found below but here is a synopsis of the features currently provided:
 
 STLasso offers a several features to build off of existing analysis tools for spatial transcriptomics data:
 

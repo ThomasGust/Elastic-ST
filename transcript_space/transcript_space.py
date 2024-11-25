@@ -496,7 +496,7 @@ class TranscriptSpace:
             if len(self.in_features) != 0:
                 feature_matrices = [feature.get_feature() for feature in self.in_features]
             else:
-                feature_matrices = [], [], []
+                feature_matrices = []
 
             if include_expression:
                 expression_feature = self.gene_expression.get_feature(exclude_genes=[self.st.idx2gene[gi]])
@@ -1354,7 +1354,7 @@ if __name__ == "__main__":
 
 
         cell_type_abundance_feature = NeighborhoodAbundanceFeature(st, cell_type=cell_type, radius=0.1, alpha=1)
-        #metagene_feature = NeighborhoodMetageneFeature(st, feature_sets, cell_type=cell_type, radius=0.1, alpha=1.5)
+        metagene_feature = NeighborhoodMetageneFeature(st, feature_sets, cell_type=cell_type, radius=0.1, alpha=1)
 
         #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0,1.0], cell_type='epithelial.cancer.subtype_2', lambd=1e-2*5)
         #ts = TranscriptSpace(st, [cell_type_abundance_feature], [1.0], cell_type='epithelial.cancer.subtype_1', lambd=1e-2*5)
@@ -1363,10 +1363,11 @@ if __name__ == "__main__":
         #np.savez(f'coefficients\\no_features\\{cell_type}.npz', **coeffs)
 
         #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], [1.0, 1.0], cell_type=cell_type, lambd=1e-2)
-        ts = TranscriptSpace(st, [cell_type_abundance_feature], cell_type=cell_type, lambd=1e-1*2)
+        #ts = TranscriptSpace(st, [cell_type_abundance_feature, metagene_feature], cell_type=cell_type, lambd=1e-2)
+        ts = TranscriptSpace(st, [], cell_type=cell_type, lambd=1e-2)
         coeffs = ts.fit(radius=0.1, include_expression=True, filter=filter_by_gene, genes=genes, n_resamples=1, n_retries=1000, resample_dim=3000, k_best=50)
         #coeffs = ts.fit(radius=0.1, include_expression=True, n_resamples=5, n_retries=1000, resample_dim=3000)
-        np.savez(f'coefficients\\withc_features\\{cell_type}.npz', **coeffs)
+        np.savez(f'coefficients\\without\\{cell_type}.npz', **coeffs)
 
         print()
         print()

@@ -14,8 +14,8 @@ def binarize_coefficients(a, thresh):
     return a
 if __name__ == "__main__":
     
-    coefficients = np.load('coefficients\\withc_features\\B-cell.npz')
-    analysis = CoefficientAnalysis(coefficients['coefficients'], coefficients['in_feature_names'], coefficients['out_feature_names'], graph_threshold=0.0, norm=False)
+    coefficients = np.load('coefficients\\without\\CAF.npz')
+    analysis = CoefficientAnalysis(coefficients['coefficients'], coefficients['in_feature_names'], coefficients['out_feature_names'], graph_threshold=0.125, norm=False)
     deg = analysis.get_graph_degree()
 
     deg = {k: v for k, v in sorted(deg.items(), key=lambda item: item[1])}

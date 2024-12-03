@@ -12,10 +12,10 @@ extensions = [
 
 setup(
     name="elastic_st",
-    version="0.1.0",
+    version="0.1.1",
     author="Thomas Gust",
     author_email="thomasgust@seattleacademy.org",
-    description="A description of your package",
+    description="A python data science library to build and analyze biological networks from spatial transcriptomics data. Allows inclusion of spatial information into the networks, going a step beyond graphs derived from scRNA-seq techniques.",
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     url="https://github.com/ThomasGust/Elastic-ST/",

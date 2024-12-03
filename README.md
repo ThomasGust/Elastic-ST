@@ -20,7 +20,7 @@ pip install elastic_st
 or alternatively install directly through GitHub
 
 ```bash
-pip install pip install git@github.com:ThomasGust/Elastic-ST.git
+pip install git@github.com:ThomasGust/Elastic-ST.git
 ```
 # Getting Started
 To get started, users need 3 basic data primitives. Firstly, a cells by genes shaped expression matrix to hold the raw transcripts per cell information. Secondly, a cells by 2 shaped position matrix to carry spatial information is required. And thirdly, Elastic-ST also requires a (cells,) shaped array representing the cell type of each cell in the dataset.

@@ -22,11 +22,9 @@ if __name__ == "__main__":
     with_analysis = est.CoefficientGraphAnalysis(with_coefficients, with_target_names, with_feature_names, graph_threshold=0.07)
     without_analysis = est.CoefficientGraphAnalysis(without_coefficients, without_target_names, without_feature_names, graph_threshold=0.07)
 
-    withadj, withorder = with_analysis.get_adjacency_matrix()
-    withadj = np.where(withadj > 0, 1, 0)
-
-    withoutadj, withoutorder = without_analysis.get_adjacency_matrix()
-    withoutadj = np.where(withoutadj > 0, 1, 0)
+    #Make sure to convert adjacency matrices to binary (0, 1) vs weighted connections
+    withadj, withorder = with_analysis.get_adjacency_matrix(as_binary=True)
+    withoutadj, withoutorder = without_analysis.get_adjacency_matrix(as_binary=True)
 
     #Compute the comparison, 0 is no edges in either, 1 is only in with, 2 is only in without, 3 is in both
     change_matrix, all_nodes = est.compare_adjacency_matrices(withadj, withorder, withoutadj, withoutorder)

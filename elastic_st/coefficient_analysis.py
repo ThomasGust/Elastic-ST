@@ -119,13 +119,14 @@ class CoefficientGraphAnalysis:
         if show:
             plt.show()
     
-    def get_adjacency_matrix(self, all_features=False) -> Tuple[np.array, list]:
+    def get_adjacency_matrix(self, all_features=False, as_binary=True) -> Tuple[np.array, list]:
         """
         A function to find the adjacency matrix of the internal graph. Only features that were kept in the graph are included by default, but all features can be included if desired. (Many nodes may be cut during graph creation if they do not meet the graph threshold set by the user).
         This function also returns an ordered list of the nodes represented in the adjacency matrix.
 
         Parameters:
             all_features (bool): Whether to include all features in the adjacency matrix.
+            as_binary (bool): Whether to return the adjacency matrix as a binary matrix.
         Returns:
             matrix (np.array): The adjacency matrix of the graph.
             node_order (list): The order of nodes in the adjacency matrix.
@@ -141,12 +142,15 @@ class CoefficientGraphAnalysis:
             node_order = list(self.feature_names) + list(self.target_names)
             # Remove duplicates while preserving order
             node_order = list(dict.fromkeys(node_order))
-            
-            # Generate the adjacency matrix with specified node order
             matrix = nx.to_numpy_array(G, nodelist=node_order)
-            return matrix, list(node_order)  # Return node_order as well
         else:
-            return nx.to_numpy_array(self.graph), list(self.graph.nodes)
+            node_order = list(self.graph.nodes)
+            matrix = nx.to_numpy_array(self.graph)
+        
+        if as_binary:
+            matrix = np.where(matrix > 0, 1, 0)
+        
+        return matrix, node_order
         
     #Now we have some utility functions to pass through analysis functionality from networkx
     def get_graph_commmunities(self) -> list:

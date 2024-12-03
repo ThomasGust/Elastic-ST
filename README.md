@@ -172,4 +172,6 @@ if __name__ == "__main__":
     statistics = est.SpatialStatistics(data)
 
     out = statistics.full_report(cell_type='macrophage', verbose=True)
+    print(list(out.keys))
+    np.savez('statistics_report_macrophage.npz', **out)
 ```

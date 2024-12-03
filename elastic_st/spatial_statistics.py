@@ -59,8 +59,6 @@ class SpatialStatistics:
         threshold_dist = kwargs.get('threshold_dist', 1.0)
 
         expression, position = self.get_expression_position_(kwargs)
-        print(expression.shape)
-        print(position.shape)
         
         distances = squareform(pdist(position)) #Get pariwise euclidean distances between cells
 

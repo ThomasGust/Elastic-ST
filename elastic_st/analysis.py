@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from elastic_st.data import SpatialTranscriptomicsData
 
-def plot_heatmap(data:SpatialTranscriptomicsData, cell_type:str, gene_name:str, show:bool=False, return_kde:bool=False, as_fraction:bool=False, save_path:str=None, bw_method:float=0.3) -> Union[None, np.array]:
+def plot_heatmap(data:SpatialTranscriptomicsData, cell_type:str, gene_name:str, show:bool=True, return_kde:bool=False, as_fraction:bool=False, save_path:str=None, bw_method:float=0.3) -> Union[None, np.array]:
     """
     A function to plot a heatmap of the spatial expression of a gene in a cell type. Useful for visually determining if the expression of a gene follows some spatial organization.
     Helpful to validate the results of spatial statistics indicators or the Elastic-ST model.
@@ -72,3 +72,28 @@ def plot_heatmap(data:SpatialTranscriptomicsData, cell_type:str, gene_name:str, 
         plt.show()
     if save_path is not None:
         plt.savefig(save_path)
+
+def scatter_plot_cells(data:SpatialTranscriptomicsData, cell_types:list[str], show:bool=True):
+    """
+    A function to plot the spatial distribution of cells in the data set. Useful for visualizing the spatial distribution of different cell types.
+
+    Parameters:
+        data (SpatialTranscriptomicsData): The spatial transcriptomics data object.
+        cell_types (list[str]): The cell types to plot. If the cell type is 'all', then all cells are plotted.
+        show (bool): Whether to show the plot.
+    """
+    plt.figure(figsize=(10, 10))
+    for cell_type in cell_types:
+        if cell_type == "all":
+            #If we want to plot all cells, we can just plot all the cells.
+            pos = data.P
+        else:
+            #Otherwise, we can use the data object to get the positions of the cells of a specific type.
+            pos = data.get_position_by_cell_type(cell_type)
+        plt.scatter(pos[:, 0], pos[:, 1], label=cell_type, alpha=0.8)
+    plt.legend()
+    plt.title("Spatial Distribution of Cells")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    if show:
+        plt.show()

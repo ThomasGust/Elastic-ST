@@ -10,7 +10,7 @@ if __name__ == "__main__":
     feature_names = coeffs['feature_names']
 
     #Create the analysis object and plot the graph
-    analysis = est.CoefficientGraphAnalysis(coefficients, target_names, feature_names, graph_threshold=0.07)
+    analysis = est.CoefficientGraphAnalysis(coefficients, feature_names, target_names, graph_threshold=0.07)
     analysis.plot_graph(show=True, node_size=10, width=0.1, font_size=10, with_labels=True)
 
     #Also find the most central nodes

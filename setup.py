@@ -18,7 +18,7 @@ setup(
     description="A description of your package",
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url="https://github.com/yourusername/your_project",
+    url="https://github.com/ThomasGust/Elastic-ST/",
     packages=find_packages(),
     ext_modules=cythonize(extensions),
     classifiers=[

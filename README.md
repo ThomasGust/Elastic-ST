@@ -83,6 +83,10 @@ if __name__ == "__main__":
 ```
 
 ## Network Visualization
+A potential network for b-cells (with high spatial bias):
+
+![B Cell Network](https://github.com/ThomasGust/Elastic-ST/blob/main/figures/networks/b_cell_network.png)
+
 Once we have trained our model, we will want to build and plot the biological network from our model's coefficient matrix. This, and several other network analysis utilities are included through the CoefficientGraphAnalysis object.
 
 ```python
@@ -118,11 +122,11 @@ if __name__ == "__main__":
 It is always necessary to make sure the results of any computational technique have some basis in reality. Elastic-ST provides the ability to create spatial plots of gene or metagene expression such as those seen below:
 
 <div justify='center'>
-  <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="300" height="300" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="300" height="300" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="300" height="300" />
+  <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
 </div>
 
 <div justify='center'>
-<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="300" height="300" />
+<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="200" height="200" />
 </div>
 
 ```python

@@ -98,7 +98,7 @@ if __name__ == "__main__":
     feature_names = coeffs['feature_names']
 
     #Create the analysis object and plot the graph
-    analysis = est.CoefficientGraphAnalysis(coefficients, target_names, feature_names, graph_threshold=0.07)
+    analysis = est.CoefficientGraphAnalysis(coefficients, feature_names, target_names, graph_threshold=0.07)
     analysis.plot_graph(show=True, node_size=10, width=0.1, font_size=10, with_labels=True)
 
     #Also find the most central nodes as an example of graph analysis
@@ -124,6 +124,7 @@ It is always necessary to make sure the results of any computational technique h
 <div justify='center'>
 <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="300" height="300" />
 </div>
+
 ```python
 import elastic_st as est
 import numpy as np
@@ -144,4 +145,11 @@ if __name__ == "__main__":
 
     #Plot the spatial heatmap for the first cancer subtype in our data, plot as a fraction of total cellular expression instead of raw expression.
     est.plot_heatmap(data, cell_type='epithelial.cancer.subtype_1', gene_name='Checkpoints', show=True, as_fraction=True)
+```
+
+## Spatial Statistics
+In order to gain better context and insights into the models output, Elastic-ST also provides a module, SpatialStatistics, to compute a few common spatial statistics indicators such as moran's I, geary's C etc...
+
+```python
+
 ```

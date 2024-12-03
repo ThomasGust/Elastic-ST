@@ -122,7 +122,7 @@ if __name__ == "__main__":
 It is always necessary to make sure the results of any computational technique have some basis in reality. Elastic-ST provides the ability to create spatial plots of gene or metagene expression such as those seen below:
 
 <div justify='center'>
-  <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
+<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
 </div>
 
 <div justify='center'>

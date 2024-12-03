@@ -117,8 +117,13 @@ if __name__ == "__main__":
 ## Spatial Heatmapping
 It is always necessary to make sure the results of any computational technique have some basis in reality. Elastic-ST provides the ability to create spatial plots of gene or metagene expression such as those seen below:
 
-<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="300" height="300" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="300" height="300" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="300" height="300" />
-<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="300" height="300" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="300" height="300" />
+<div justify='center'>
+  <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /> <img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
+</div>
+
+<div justify='center'>
+<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="200" height="200" />
+</div>
 ```python
 import elastic_st as est
 import numpy as np

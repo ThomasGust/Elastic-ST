@@ -32,7 +32,7 @@ def plot_heatmap(data:SpatialTranscriptomicsData, cell_type:str, gene_name:str, 
         
         if as_fraction:
             #If we do this as a fraction, we get the expression of the gene as a fraction of the total expression in the cell. Not really recommended, but its an option.
-            expression = expression[:, data.gene2idx[gene_name]]/np.sum(expression, axis=1)
+            expression = expression[:, data.gene2idx[gene_name]]/(np.sum(expression, axis=1) + 1e-6)
         else:
             expression = expression[:, data.gene2idx[gene_name]]
         

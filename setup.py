@@ -5,7 +5,7 @@ import numpy
 extensions = [
     Extension(
         name="weighted_elastic_net",
-        sources=["elastic_st\\weighted_elastic_net.pyx"],
+        sources=["weighted_elastic_net.pyx"],
         include_dirs=[numpy.get_include()],
     ),
 ]

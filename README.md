@@ -1,4 +1,6 @@
 # Elastic-ST
+
+(currently in pre-release, this repository is not public so installing from pypi servers will not work)
 ![Spatial Transcriptomics Header](https://www.science.org/do/10.1126/webinar.adc3330/abs/resolve_16x9large_v1.png)
 
 Elastic-ST is a python package designed to let scientists learn more from their spatial transcriptomics data. Using pre-typed spatial transcriptomics data, users train a series of ElasticNet models to build a biological graph for a cell type or cell population of interest.

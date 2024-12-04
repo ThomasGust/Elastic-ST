@@ -11,8 +11,7 @@ Below, an example of how spatial information can change a biological network:
 ![B Cell Graph Topology Comparison](https://github.com/ThomasGust/Elastic-ST/blob/main/figures/adjacency/b_cell_topology_comparison.png)
 
 # Installation
-Installation is simple through pip (not yet available)
-
+Installation is simple through pip (currently in pre-release)
 ```bash
 pip install elastic_st
 ```

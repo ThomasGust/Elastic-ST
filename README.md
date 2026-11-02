@@ -6,7 +6,7 @@ Elastic-ST is a Python library for building gene networks from spatial transcrip
 
 *Edges in a B-cell gene network that appear only when spatial features are included (red), only without them (blue), or in both (purple).*
 
-**Status:** version 0.1.1 is on [PyPI](https://pypi.org/project/elastic-st/). The API may still change.
+**Status:** version 0.1.2, available from the [GitHub release](https://github.com/ThomasGust/Elastic-ST/releases/tag/v0.1.2). The API may still change.
 
 ## How it works
 
@@ -22,12 +22,12 @@ I started Elastic-ST in fall 2024, early in a mentorship with a scientist at Bru
 
 # Installation
 ```bash
-pip install elastic_st
+pip install elastic_st --find-links https://github.com/ThomasGust/Elastic-ST/releases/expanded_assets/v0.1.2
 ```
 
-Prebuilt wheels are available for Windows, macOS, and Linux on Python 3.9 through 3.14.
+This installs a prebuilt wheel from the GitHub release, available for Windows, macOS, and Linux on Python 3.9 through 3.14, so no compiler is needed. The older version 0.1.1 on PyPI doesn't install correctly, so plain `pip install elastic_st` won't work until 0.1.2 is published there.
 
-To install the latest version from GitHub instead:
+To install the latest development version from GitHub instead:
 
 ```bash
 pip install git+https://github.com/ThomasGust/Elastic-ST.git

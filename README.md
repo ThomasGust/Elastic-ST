@@ -1,33 +1,43 @@
 # Elastic-ST
 
-(currently in pre-release, no guarantee everything will work as expected!)
-![Spatial Transcriptomics Header](https://www.science.org/do/10.1126/webinar.adc3330/abs/resolve_16x9large_v1.png)
+Elastic-ST is a Python library for building gene networks from spatial transcriptomics data. Most gene network methods only see each cell's own expression. Elastic-ST also lets the network use what surrounds each cell, like the mix of nearby cell types or nearby expression of a gene set, so you can ask how a cell's neighborhood relates to its gene activity.
 
-Elastic-ST is a python package designed to let scientists learn more from their spatial transcriptomics data. Using pre-typed spatial transcriptomics data, users train a series of ElasticNet models to build a biological graph for a cell type or cell population of interest.
-These networks include features generated from the position information provided spatial transcriptomics techniques (such as neighborhood cell type or metagene abundance), providing a level of understanding beyond networks derived from scRNA-seq techniques. 
+![Edges in a B-cell gene network with and without spatial features](https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/adjacency/b_cell_topology_comparison.png)
 
-Elastic-ST also features a new, blazingly fast Cython implementation of a weighted elastic net. Users can specify different regularization penalties for each feature in their dataset, allowing fine control over how central each feature group is in the final networks, and opening up exploration of a whole new range of questions.
-In this manner, spatial information doesn't need to be drowned out by the single cell transcriptome.
+*Edges in a B-cell gene network that appear only when spatial features are included (red), only without them (blue), or in both (purple).*
 
-Below, an example of how spatial information can change a biological network:
-![B Cell Graph Topology Comparison](https://github.com/ThomasGust/Elastic-ST/blob/main/figures/adjacency/b_cell_topology_comparison.png)
+**Status:** version 0.1.1 is on [PyPI](https://pypi.org/project/elastic-st/). The API may still change.
+
+## How it works
+
+For a chosen cell type, Elastic-ST fits one elastic net regression per gene, predicting that gene's expression from every other gene plus any spatial features you add. The fitted coefficients become the edges of the network.
+
+The regressions run in parallel and use a weighted elastic net written in Cython, which gives each group of features its own regularization penalty. That lets you control how strongly the model favors spatial features, so they aren't drowned out by the much larger number of gene features.
+
+Elastic-ST also includes tools to plot and analyze the resulting networks, map gene expression across the tissue, and compute spatial statistics such as Moran's I and Geary's C.
+
+## Background
+
+I started Elastic-ST in fall 2024, early in a mentorship with a scientist at Bruker Spatial Biology (formerly NanoString), to study how cells in a tumor relate to their neighbors. It's a personal project, not a Bruker product.
 
 # Installation
-Installation is simple through pip (currently in pre-release)
 ```bash
 pip install elastic_st
 ```
 
-or alternatively install directly through GitHub
+or install the latest version from GitHub:
 
 ```bash
 pip install git+https://github.com/ThomasGust/Elastic-ST.git
 ```
 # Getting Started
-To get started, users need 3 basic data primitives. Firstly, a cells by genes shaped expression matrix to hold the raw transcripts per cell information. Secondly, a cells by 2 shaped position matrix to carry spatial information is required. And thirdly, Elastic-ST also requires a (cells,) shaped array representing the cell type of each cell in the dataset.
-For interpretability, users must also provide a list of gene names, and a list of cell types to create a dataset.
+Elastic-ST needs three arrays from cell-typed spatial transcriptomics data:
 
-All datasets are represented through the SpatialTranscriptomicsData object:
+- `G`: a (cells, genes) expression matrix of raw transcript counts
+- `P`: a (cells, 2) matrix of cell positions
+- `T`: a (cells,) array of cell type labels
+
+You also provide the list of gene names and the list of cell types. Together these make up a `SpatialTranscriptomicsData` object:
 
 ```python
 import elastic_st as est
@@ -35,22 +45,22 @@ import numpy as np
 import json
 
 if __name__ == "__main__":
-  G = np.load('data\\G.npy') # (cells, genes)
-  P = np.load('data\\P.npy') # (cells, 2)
-  T = np.load('data\\T.npy') # (cells,)
+    G = np.load('data/G.npy') # (cells, genes)
+    P = np.load('data/P.npy') # (cells, 2)
+    T = np.load('data/T.npy') # (cells,)
 
-  annotations = json.load(open('data\\annotations.json'))
-  gene_names = annotations['gene_names'] # (genes,)
-  cell_types = annnotations['cell_types']# (cell_types,)
+    annotations = json.load(open('data/annotations.json'))
+    gene_names = annotations['gene_names'] # (genes,)
+    cell_types = annotations['cell_types'] # (cell_types,)
 
-  data = SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_types=cell_types)
+    data = est.SpatialTranscriptomicsData(G, P, T, gene_names=gene_names, cell_types=cell_types)
 ```
 
 # Examples
-For a full list of examples, please refer to the examples folder of this repository. Below are a few common techniques to start moving with the library.
+More examples are in the [examples](examples) folder. Below are the most common workflows.
 
 ## Model Training
-The core function of Elastic-ST is to create a semi-sparse coefficient matrix by training a bunch of ElasticNet models. This functionality is provided through the ElasticST module and it's associated feature objects that allow the inclusion of spatial information.
+The core of Elastic-ST is the `ElasticST` model, which fits the per-gene elastic nets and returns a sparse coefficient matrix. Spatial information enters through feature objects such as `CellTypeAbundanceFeature` and `MetageneAbundanceFeature`. A feature's `bias` sets how strongly it's favored: `bias=5` gives it a regularization penalty 5 times weaker than the genes'.
 
 ```python
 import elastic_st as est
@@ -74,7 +84,7 @@ if __name__ == "__main__":
     metagene_abundance_feature = est.MetageneAbundanceFeature(bias=5, data=data, cell_type='B-cell', metagenes={'Checkpoints': ['CTLA4', 'CD274', 'TIGIT']}, radius=0.1)
     cell_type_abundance_feature = est.CellTypeAbundanceFeature(bias=5, data=data, cell_type='B-cell', radius=0.1)
 
-    #A variance threshold is applied to make sure we don't pick up any 'useless' or 'unimportant' genes. This also speeds up model training
+    #A variance threshold removes low-variance genes that carry little information. This also speeds up model training
     data.variance_filter(threshold=0.2)
 
     #Train and save the model
@@ -84,11 +94,11 @@ if __name__ == "__main__":
 ```
 
 ## Network Visualization
-A potential network for b-cells (with high spatial bias):
+A potential network for B cells (with high spatial bias):
 
-![B Cell Network](https://github.com/ThomasGust/Elastic-ST/blob/main/figures/networks/b_cell_network.png)
+![B Cell Network](https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/networks/b_cell_network.png)
 
-Once we have trained our model, we will want to build and plot the biological network from our model's coefficient matrix. This, and several other network analysis utilities are included through the CoefficientGraphAnalysis object.
+Once the model is trained, `CoefficientGraphAnalysis` builds and plots the network from the coefficient matrix and provides several graph analysis utilities.
 
 ```python
 import elastic_st as est
@@ -120,15 +130,15 @@ if __name__ == "__main__":
 ```
 
 ## Spatial Heatmapping
-It is always necessary to make sure the results of any computational technique have some basis in reality. Elastic-ST provides the ability to create spatial plots of gene or metagene expression such as those seen below:
+Any computational result should be checked against the tissue itself. Elastic-ST can plot where a gene or gene set is expressed across the tissue, like the examples below:
 
-<div justify='center'>
-<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
-</div>
+<p align="center">
+<img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/Checkpoints_epc1.png" width="200" height="200" /><img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/Checkpoints_epc2.png" width="200" height="200" /><img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/cd74_b_cell.png" width="200" height="200" />
+</p>
 
-<div justify='center'>
-<img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/cd74_macrophage.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/gzmm_tcd8.png" width="200" height="200" /><img src="https://github.com/ThomasGust/Elastic-ST/blob/main/figures/heatmaps/pigr_treg.png" width="200" height="200" />
-</div>
+<p align="center">
+<img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/cd74_macrophage.png" width="200" height="200" /><img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/gzmm_tcd8.png" width="200" height="200" /><img src="https://raw.githubusercontent.com/ThomasGust/Elastic-ST/main/figures/heatmaps/pigr_treg.png" width="200" height="200" />
+</p>
 
 ```python
 import elastic_st as est
@@ -153,7 +163,7 @@ if __name__ == "__main__":
 ```
 
 ## Spatial Statistics
-In order to gain better context and insights into the models output, Elastic-ST also provides a module, SpatialStatistics, to compute a few common spatial statistics indicators such as moran's I, geary's C etc...
+For more context on the model's output, the `SpatialStatistics` module computes common spatial statistics such as Moran's I and Geary's C.
 
 ```python
 import elastic_st as est
@@ -173,6 +183,6 @@ if __name__ == "__main__":
     statistics = est.SpatialStatistics(data)
 
     out = statistics.full_report(cell_type='macrophage', verbose=True)
-    print(list(out.keys))
+    print(list(out.keys()))
     np.savez('statistics_report_macrophage.npz', **out)
 ```

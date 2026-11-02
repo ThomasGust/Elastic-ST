@@ -25,11 +25,15 @@ I started Elastic-ST in fall 2024, early in a mentorship with a scientist at Bru
 pip install elastic_st
 ```
 
-or install the latest version from GitHub:
+Prebuilt wheels are available for Windows, macOS, and Linux on Python 3.9 through 3.14.
+
+To install the latest version from GitHub instead:
 
 ```bash
 pip install git+https://github.com/ThomasGust/Elastic-ST.git
 ```
+
+Installing from GitHub compiles the Cython extension, so it needs a C compiler (on Windows, the [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)).
 # Getting Started
 Elastic-ST needs three arrays from cell-typed spatial transcriptomics data:
 

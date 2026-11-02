@@ -1,0 +1,2 @@
+include elastic_st/*.pyx
+recursive-include tests *.py

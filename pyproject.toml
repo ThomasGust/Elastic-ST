@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77", "Cython>=3.0", "numpy>=2.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elastic_st"
+version = "0.1.2"
+description = "Build and analyze gene networks from spatial transcriptomics data, including information about each cell's neighborhood."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE.txt"]
+authors = [{ name = "Thomas Gust" }]
+dependencies = [
+    "numpy>=1.23",
+    "scipy",
+    "scikit-learn",
+    "pandas",
+    "matplotlib",
+    "networkx",
+    "joblib",
+    "tqdm",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Cython",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Homepage = "https://github.com/ThomasGust/Elastic-ST"
+
+[tool.setuptools]
+packages = ["elastic_st"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "cp3??t-* *-manylinux_i686 *-musllinux_* *-win32"
+test-requires = ["pytest"]
+test-sources = ["tests"]
+test-command = "pytest tests"
+# x86_64 macOS wheels are cross-compiled on Apple Silicon runners, so they can't be tested there
+test-skip = "*-macosx_x86_64"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]

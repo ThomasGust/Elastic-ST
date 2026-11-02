@@ -2,7 +2,7 @@ import numpy as np
 import json
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
-from weighted_elastic_net import WeightedElasticNet
+from elastic_st.weighted_elastic_net import WeightedElasticNet
 from typing import Union
 from joblib import Parallel, delayed
 

@@ -34,7 +34,7 @@ class SpatialTranscriptomicsData:
 
         # If it is not already, convert cell types to integers for standardization across modules.
         if isinstance(self.T[0], str):
-            self.T = [self.cell_type2idx[cell_type] for cell_type in self.T]
+            self.T = np.array([self.cell_type2idx[cell_type] for cell_type in self.T])
     
     #These 3 helper functions allow easy access to cell type specific information
     def get_cell_type_indices(self, cell_type:str) -> np.array:

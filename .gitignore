@@ -1,1 +1,9 @@
 .trunk
+__pycache__/
+build/
+dist/
+wheelhouse/
+*.egg-info/
+elastic_st/*.c
+*.pyd
+*.so

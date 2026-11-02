@@ -1,7 +1,8 @@
 name: Build and publish
 
 # Builds and tests wheels on every push and pull request.
-# Publishes to PyPI only when a GitHub release is published.
+# When a GitHub release is published, attaches the wheels to the release and publishes to PyPI.
+# The filename and the "pypi" environment match the PyPI trusted publisher settings.
 on:
   push:
     branches: [main]
@@ -36,6 +37,22 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+
+  release_assets:
+    name: Attach wheels to the GitHub release
+    needs: [build_wheels, build_sdist]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/* --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   publish:
     name: Publish to PyPI
